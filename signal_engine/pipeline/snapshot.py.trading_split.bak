@@ -1,0 +1,384 @@
+#!/usr/bin/env python3
+"""
+# ============================================================
+# 🦞 TOKNCLAW — MARKET INTELLIGENCE ENGINE
+# ============================================================
+#
+# ████████╗ ██████╗ ██╗  ██╗███╗   ██╗ ██████╗██╗      █████╗ ██╗    ██╗
+# ╚══██╔══╝██╔═══██╗██║ ██╔╝████╗  ██║██╔════╝██║     ██╔══██╗██║    ██║
+#    ██║   ██║   ██║█████╔╝ ██╔██╗ ██║██║     ██║     ███████║██║ █╗ ██║
+#    ██║   ██║   ██║██╔═██╗ ██║╚██╗██║██║     ██║     ██╔══██║██║███╗██║
+#    ██║   ╚██████╔╝██║  ██╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
+#    ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+#
+# SYSTEM: ToknClaw Intelligence Layer
+# MODULE: snapshot
+# PURPOSE: Builds the full ToknClaw intelligence graph from the rolling signal lake.
+#
+# AUTHOR: TOKN SYSTEM
+# ============================================================
+
+Responsibilities
+----------------
+• load signal lake
+• run all collectors dynamically
+• rank and diversify signals
+• build clusters and narratives
+• build alpha, quant, strategy, and execution layers
+• persist intelligence-ready snapshot payload
+
+Author: TOKN Systems
+"""
+from __future__ import annotations
+
+from signal_engine import bootstrap
+
+import time
+from types import SimpleNamespace
+from typing import Any, Dict, List
+
+from signal_engine.pipeline.collector_loader import run_collectors
+from signal_engine.pipeline.price_engine import update_price_history
+
+from pipeline.ranker import compute_score
+from pipeline.metrics import compute_metrics
+from pipeline.analyst import analyze
+
+from pipeline.cluster_engine import build_clusters
+from pipeline.cluster_analyst import analyze_clusters
+
+from pipeline.narrative_engine import (
+    build_narratives,
+    build_narrative_summary,
+    build_narrative_alerts,
+)
+from pipeline.narrative_correlation_engine import (
+    build_narrative_correlations,
+    build_narrative_correlation_summary,
+)
+from pipeline.narrative_memory import update_narrative_memory
+from pipeline.arc_engine import build_narrative_arcs
+
+from pipeline.entity_memory import build_entity_intelligence
+from pipeline.entity_discovery_engine import run_entity_discovery
+
+from pipeline.regime_engine import build_market_regime
+from pipeline.signal_velocity_engine import build_signal_velocity
+from pipeline.cross_asset_intelligence_engine import build_cross_asset_intelligence
+
+from pipeline.macro_liquidity_engine import build_macro_liquidity
+from pipeline.institutional_flow_engine import build_institutional_flows
+from pipeline.market_stress_engine import build_market_stress
+from pipeline.liquidity_rotation_engine import build_liquidity_rotation
+from pipeline.market_structure_engine import build_market_structure
+
+from pipeline.quant_factor_engine import build_quant_factors
+from pipeline.trade_signal_engine import build_trade_signals
+from pipeline.conviction_engine import build_conviction_scores
+
+from pipeline.strategy_registry_engine import load_strategy_registry
+from pipeline.strategy_candidate_engine import build_strategy_candidates
+from pipeline.strategy_optimizer_engine import optimize_strategies
+from pipeline.strategy_allocation_engine import build_strategy_allocation
+from pipeline.strategy_simulation_engine import build_strategy_simulation
+from pipeline.strategy_performance_engine import build_strategy_performance
+from pipeline.position_risk_engine import build_position_risk
+from pipeline.execution_router_engine import build_execution_router
+from pipeline.order_lifecycle_engine import build_order_lifecycle
+from pipeline.kill_switch_engine import build_kill_switch
+
+from pipeline.backtesting_engine import build_backtests
+from pipeline.paper_trading_engine import build_paper_trading
+from pipeline.alpha_attribution_engine import build_alpha_attribution
+from pipeline.adaptive_strategy_weighting_engine import build_adaptive_strategy_weighting
+from pipeline.history_store import persist_snapshot
+
+from schema.snapshot_schema import empty_snapshot, normalize_signals
+from health.source_health import summarize
+
+from verticals.culture import build_culture_vertical
+from verticals.watchlists import build_watchlists
+from verticals.calendar import build_calendar
+from verticals.analysis import build_risks
+
+from signal_engine.runtime_config import load_config
+from signal_lake import load_signal_lake
+from signal_engine.pipeline.output_router import build_output_views
+from signal_engine.pipeline.entity_registry_engine import build_entity_registry
+
+
+collector_cfg = load_config("collector_settings.json")
+
+MAX_PER_ENTITY = collector_cfg.get("max_signals_per_entity", 10)
+MAX_TOTAL = collector_cfg.get("max_signals_per_snapshot", 500)
+
+
+def _to_obj(signal: Any) -> Any:
+    if isinstance(signal, dict):
+        return SimpleNamespace(**signal)
+    return signal
+
+
+def dedupe(signals: List[Any]) -> List[Any]:
+    seen = set()
+    out = []
+
+    for s in signals:
+        key = (
+            getattr(s, "source", None),
+            getattr(s, "signal_type", None),
+            getattr(s, "title", None),
+            getattr(s, "entity", None),
+            getattr(s, "raw_url", None),
+            getattr(s, "summary", None),
+        )
+
+        if key not in seen:
+            seen.add(key)
+            out.append(s)
+
+    return out
+
+
+def diversify(signals: List[Any]) -> List[Any]:
+    entity_counts = {}
+    out = []
+
+    for s in signals:
+        entity = getattr(s, "entity", None) or "NONE"
+
+        if entity_counts.get(entity, 0) >= MAX_PER_ENTITY:
+            continue
+
+        entity_counts[entity] = entity_counts.get(entity, 0) + 1
+        out.append(s)
+
+        if len(out) >= MAX_TOTAL:
+            break
+
+    return out
+
+
+def generate_snapshot() -> Dict[str, Any]:
+    snapshot = empty_snapshot()
+    snapshot["timestamp"] = time.time()
+
+    # ---------------------------------------------------
+    # COLLECTORS (UNIFIED ENTRY POINT)
+    # ---------------------------------------------------
+
+    try:
+        collector_signals, collector_health = run_collectors(mode="fast")
+
+        snapshot["signals"] = collector_signals  # keep raw until final stage
+        snapshot["collector_health"] = collector_health
+
+        print(f"[COLLECTORS] total_signals={len(collector_signals)}")
+
+    except Exception as e:
+        print("[COLLECTORS] error:", e)
+        snapshot["signals"] = []
+
+    # ---------------------------------------------------
+    # PRICE ENGINE (NEW)
+    # ---------------------------------------------------
+
+    try:
+        update_price_history(snapshot)
+        print("[PRICE ENGINE] updated")
+    except Exception as e:
+        print("[PRICE ENGINE] error:", e)
+    # ---------------------------------------------------
+    # DEDUPE + RANK
+    # ---------------------------------------------------
+
+    raw_signals = [_to_obj(s) for s in snapshot["signals"]]
+    raw_signals = dedupe(raw_signals)
+
+    ranked = sorted(raw_signals, key=lambda s: compute_score(s), reverse=True)
+
+    # ---------------------------------------------------
+    # SIGNAL QUALITY FILTER (NEW)
+    # ---------------------------------------------------
+
+    # ---------------------------------------------------
+    # SIGNAL QUALITY FILTER (NEW)
+    # ---------------------------------------------------
+
+    def is_valid_signal(s):
+        score = compute_score(s)
+
+        if score < 2:
+            return False
+
+        if not getattr(s, "entity", None):
+            return False
+
+        return True
+
+    ranked = [s for s in ranked if is_valid_signal(s)]
+
+    print(f"[FILTER] post_rank_filter={len(ranked)}")
+    priority_signals = []
+    normal_signals = []
+
+    for s in ranked:
+        st = getattr(s, "signal_type", "").lower()
+
+        # -----------------------------------------
+        # EXCLUDE LOW-QUALITY MEME / NOISE SIGNALS
+        # -----------------------------------------
+
+        if "pumpfun" in st:
+            continue  # hard skip memecoin spam
+
+        # -----------------------------------------
+        # PRIORITIZE REAL MARKET SIGNALS
+        # -----------------------------------------
+
+        if any(x in st for x in [
+            "liquidity",
+            "velocity",
+            "whale",
+            "strategy",
+            "alpha",
+        ]):
+            priority_signals.append(s)
+        else:
+            normal_signals.append(s)
+
+    diversified = priority_signals + diversify(normal_signals)
+
+    # ---------------------------------------------------
+    # SIGNAL TYPE BALANCE (NEW)
+    # ---------------------------------------------------
+
+    type_counts = {}
+    balanced = []
+
+    for s in diversified:
+        st = getattr(s, "signal_type", "unknown")
+
+        if type_counts.get(st, 0) >= 25:
+            continue
+
+        type_counts[st] = type_counts.get(st, 0) + 1
+        balanced.append(s)
+
+    snapshot["signals"] = normalize_signals(balanced)
+
+    # ---------------------------------------------------
+    # FIX: RESTORE RAW ENTITY CASE (CRITICAL)
+    # ---------------------------------------------------
+
+    for row in snapshot["signals"]:
+        if not isinstance(row, dict):
+            continue
+
+        entity = row.get("entity")
+
+        if isinstance(entity, str):
+            # if it's fully uppercase, it's corrupted → revert heuristic
+            if entity.upper() == entity:
+                # try to recover from original signal if present
+                original = row.get("_raw_entity")
+
+                if original:
+                    row["entity"] = original
+                else:
+                    # fallback: lower-case restore (better than invalid base58)
+                    row["entity"] = entity.lower()
+
+    # ---------------------------------------------------
+    # FORCE DICT NORMALIZATION (CRITICAL FIX)
+    # ---------------------------------------------------
+
+    normalized_signals = []
+
+    for s in snapshot["signals"]:
+        if hasattr(s, "__dict__"):
+            normalized_signals.append(dict(s.__dict__))
+        elif isinstance(s, dict):
+            normalized_signals.append(s)
+
+    snapshot["signals"] = normalized_signals
+
+    # ---------------------------------------------------
+    # REST OF PIPELINE (UNCHANGED)
+    # ---------------------------------------------------
+
+    snapshot["verticals"]["culture"] = build_culture_vertical(snapshot["signals"])
+    snapshot["retail_pulse"] = snapshot["verticals"]["culture"]
+
+    snapshot["clusters"] = build_clusters(snapshot["signals"])
+    snapshot["cluster_analysis"] = analyze_clusters(snapshot["clusters"])
+
+    snapshot["entity_discovery"] = run_entity_discovery(snapshot)
+
+    snapshot["narratives"] = build_narratives(snapshot)
+    snapshot["narrative_summary"] = build_narrative_summary(snapshot)
+    snapshot["narrative_alerts"] = build_narrative_alerts(snapshot)
+
+    snapshot["narrative_correlations"] = build_narrative_correlations(snapshot)
+    snapshot["narrative_correlation_summary"] = build_narrative_correlation_summary(snapshot)
+
+    snapshot = update_narrative_memory(snapshot)
+    snapshot["narrative_arcs"] = build_narrative_arcs(snapshot)
+
+    snapshot["entity_intelligence"] = build_entity_intelligence(snapshot)
+    snapshot["entities"] = build_entity_registry(snapshot)
+
+    from pipeline.entity_classification_engine import build_entity_classification
+
+    classification = build_entity_classification(snapshot)
+
+    snapshot.update(classification)
+
+    snapshot["market_regime"] = build_market_regime(snapshot)
+    snapshot["signal_velocity"] = build_signal_velocity(snapshot)
+    snapshot["cross_asset_intelligence"] = build_cross_asset_intelligence(snapshot)
+
+    snapshot["macro_liquidity"] = build_macro_liquidity(snapshot)
+    snapshot["institutional_flows"] = build_institutional_flows(snapshot)
+    snapshot["market_stress"] = build_market_stress(snapshot)
+    snapshot["liquidity_rotation"] = build_liquidity_rotation(snapshot)
+    snapshot["market_structure"] = build_market_structure(snapshot)
+
+    snapshot["quant_factors"] = build_quant_factors(snapshot)
+    snapshot["trade_signals"] = build_trade_signals(snapshot)
+    snapshot["conviction_scores"] = build_conviction_scores(snapshot)
+
+    registry = load_strategy_registry()
+    snapshot["strategy_candidates"] = build_strategy_candidates(snapshot, registry)
+
+    optimized = optimize_strategies(snapshot, snapshot["strategy_candidates"])
+    snapshot["optimized_strategies"] = optimized.get("strategies", [])
+
+    snapshot["strategy_allocations"] = build_strategy_allocation(snapshot).get("rows", [])
+    snapshot["strategy_performance"] = build_strategy_performance(snapshot)
+
+    snapshot["position_risk"] = build_position_risk(snapshot).get("rows", [])
+
+    snapshot["execution_router"] = build_execution_router(snapshot).get("execution_router", [])
+
+    snapshot["order_lifecycle"] = [
+        build_order_lifecycle(order)
+        for order in snapshot.get("execution_router", [])
+    ]
+
+    snapshot["kill_switch"] = build_kill_switch(snapshot)
+
+    snapshot["backtests"] = build_backtests(snapshot)
+    snapshot["paper_trading"] = build_paper_trading(snapshot)
+    snapshot["alpha_attribution"] = build_alpha_attribution(snapshot)
+
+    snapshot["metrics"] = compute_metrics(snapshot["signals"])
+    snapshot["watchlists"] = build_watchlists(snapshot["signals"])
+    snapshot["risks"] = build_risks(snapshot["signals"], snapshot["retail_pulse"])
+    snapshot["calendar"] = build_calendar()
+
+    snapshot["views"] = build_output_views(snapshot)
+
+    persist_snapshot(snapshot)
+
+    return snapshot

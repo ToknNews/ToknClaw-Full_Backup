@@ -1,0 +1,1464 @@
+#!/usr/bin/env python3
+"""
+# ============================================================
+# 🦞 TOKNCLAW — MARKET INTELLIGENCE ENGINE
+# ============================================================
+#
+# ████████╗ ██████╗ ██╗  ██╗███╗   ██╗ ██████╗██╗      █████╗ ██╗    ██╗
+# ╚══██╔══╝██╔═══██╗██║ ██╔╝████╗  ██║██╔════╝██║     ██╔══██╗██║    ██║
+#    ██║   ██║   ██║█████╔╝ ██╔██╗ ██║██║     ██║     ███████║██║ █╗ ██║
+#    ██║   ██║   ██║██╔═██╗ ██║╚██╗██║██║     ██║     ██╔══██║██║███╗██║
+#    ██║   ╚██████╔╝██║  ██╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
+#    ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+#
+# SYSTEM: ToknClaw Intelligence Layer
+# MODULE: paper_trading_engine
+# PURPOSE: Consume trade_signal_engine rows and manage durable paper trading
+#          state with priority-aware entries, long/short symmetry, flow-aware
+#          exits, and rotation logic for limited-capacity execution.
+#
+# AUTHOR: TOKN SYSTEM
+# ============================================================
+
+This module is designed to:
+• open paper positions from trade_signal_engine rows
+• preserve durable JSON state for dashboards and monitoring
+• support long and short execution symmetrically
+• prioritize entries by confidence + priority_score
+• rotate out weaker positions when stronger candidates appear
+• close positions on stop, target, direction flip, no-trade/neutral,
+  confidence decay, flow invalidation, or emergency hold timeout
+• remain additive and OpenClaw agent ready
+
+Primary Inputs
+--------------
+/opt/toknclaw/data/snapshots/latest_snapshot_trading.json
+/opt/toknclaw/data/token_price_history.json
+
+Primary Output
+--------------
+/opt/toknclaw/data/paper_trading_state.json
+
+Agent Readiness
+---------------
+OpenClaw agents should tune:
+• /opt/toknclaw/config/paper_trading_engine.json
+"""
+
+from __future__ import annotations
+
+# ---------------------------------------------------
+# PROJECT ROOT BOOTSTRAP
+# ---------------------------------------------------
+
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# ---------------------------------------------------
+# IMPORTS
+# ---------------------------------------------------
+
+import hashlib
+import json
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+from signal_engine.runtime_config import load_config
+
+# ---------------------------------------------------
+# PATHS
+# ---------------------------------------------------
+
+CONFIG_FILE = "paper_trading_engine.json"
+
+SNAPSHOT_PATH = Path("/opt/toknclaw/data/snapshots/latest_snapshot_trading.json")
+PRICE_HISTORY_PATH = Path("/opt/toknclaw/data/token_price_history.json")
+STATE_PATH = Path("/opt/toknclaw/data/paper_trading_state.json")
+STATE_TMP_PATH = Path("/opt/toknclaw/data/paper_trading_state.tmp")
+
+# ---------------------------------------------------
+# DEFAULT CONFIG
+# ---------------------------------------------------
+
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "enabled": True,
+    "debug": True,
+
+    "starting_cash_usd": 10000.0,
+    "base_position_size_usd": 250.0,
+    "max_position_size_usd": 700.0,
+
+    "max_open_positions": 4,
+    "max_positions_per_symbol": 1,
+
+    "allowed_entities": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "BNB",
+        "XRP",
+        "DOGE",
+        "LINK",
+        "AVAX",
+        "ARB",
+        "OP",
+        "INJ",
+        "PYTH",
+        "JUP",
+        "RNDR"
+    ],
+
+    "allowed_directions": [
+        "bullish",
+        "strong_bullish",
+        "bearish",
+        "strong_bearish"
+    ],
+
+    "min_confidence_bullish": 0.25,
+    "min_confidence_strong_bullish": 0.45,
+    "min_confidence_bearish": 0.25,
+    "min_confidence_strong_bearish": 0.45,
+
+    "trade_signal_rows_primary": True,
+    "fallback_to_snapshot_signals": False,
+
+    "allow_long": True,
+    "allow_short": True,
+
+    "take_profit_pct_long": 6.0,
+    "stop_loss_pct_long": -3.0,
+    "take_profit_pct_short": 6.0,
+    "stop_loss_pct_short": -3.0,
+
+    # emergency backstop only; not intended as a primary exit
+    "max_hold_minutes": 9999,
+    "cooldown_minutes_after_close": 45,
+
+    "close_on_direction_flip": True,
+    "close_on_neutral_signal": True,
+    "close_on_no_trade_signal": False,
+    "close_on_confidence_decay": True,
+    "min_live_confidence_to_hold_long": 0.25,
+    "min_live_confidence_to_hold_short": 0.25,
+
+    "slippage_bps_entry": 8,
+    "slippage_bps_exit": 8,
+    "fee_bps_entry": 4,
+    "fee_bps_exit": 4,
+
+    "max_activity_log": 500,
+    "max_decision_log": 1000,
+    "max_closed_positions": 5000,
+
+    "store_signal_copy": True,
+    "confidence_position_sizing": True,
+    "confidence_size_multiplier_cap": 2.2,
+
+    # rotation / opportunity-cost controls
+    "rotation_enabled": True,
+    "min_rotation_priority_edge": 0.15,
+    "min_rotation_confidence_edge": 0.08,
+    "replace_weaker_same_symbol": True,
+
+    "broadcast_openclaw_notes": {
+        "tunable_fields": [
+            "allowed_entities",
+            "allowed_directions",
+            "min_confidence_bullish",
+            "min_confidence_strong_bullish",
+            "min_confidence_bearish",
+            "min_confidence_strong_bearish",
+            "base_position_size_usd",
+            "max_position_size_usd",
+            "take_profit_pct_long",
+            "stop_loss_pct_long",
+            "take_profit_pct_short",
+            "stop_loss_pct_short",
+            "max_hold_minutes",
+            "close_on_direction_flip",
+            "close_on_neutral_signal",
+            "close_on_no_trade_signal",
+            "close_on_confidence_decay",
+            "min_live_confidence_to_hold_long",
+            "min_live_confidence_to_hold_short",
+            "rotation_enabled",
+            "min_rotation_priority_edge",
+            "min_rotation_confidence_edge"
+        ]
+    }
+}
+
+# ---------------------------------------------------
+# HELPERS
+# ---------------------------------------------------
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def now_iso() -> str:
+    return utc_now().isoformat()
+
+
+def parse_dt(value: Any) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+
+        dt = datetime.fromisoformat(text)
+
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+
+        return dt.astimezone(UTC)
+    except Exception:
+        return None
+
+
+def clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def clean_upper(value: Any) -> str:
+    return clean_text(value).upper()
+
+
+def safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def safe_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def safe_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value in {"true", "True", "1", 1}:
+        return True
+    if value in {"false", "False", "0", 0}:
+        return False
+    return default
+
+
+def debug_enabled(cfg: Dict[str, Any]) -> bool:
+    return bool(cfg.get("debug", True))
+
+
+def debug_log(cfg: Dict[str, Any], message: str) -> None:
+    if debug_enabled(cfg):
+        print(f"[PAPER TRADING] {message}")
+
+
+def read_json_file(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def write_json_atomic(path: Path, tmp_path: Path, payload: Dict[str, Any]) -> None:
+    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+
+    # safer atomic write
+    if tmp_path.exists():
+        tmp_path.replace(path)
+    else:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+def load_engine_config() -> Dict[str, Any]:
+    cfg = load_config(CONFIG_FILE)
+
+    if not isinstance(cfg, dict):
+        return deepcopy(DEFAULT_CONFIG)
+
+    merged = deepcopy(DEFAULT_CONFIG)
+    merged.update(cfg)
+
+    for key in ["allowed_entities", "allowed_directions"]:
+        value = merged.get(key)
+        if not isinstance(value, list):
+            merged[key] = deepcopy(DEFAULT_CONFIG[key])
+        else:
+            if key == "allowed_entities":
+                merged[key] = [clean_upper(x) for x in value if clean_text(x)]
+            else:
+                merged[key] = [clean_text(x) for x in value if clean_text(x)]
+
+    return merged
+
+
+def make_trade_id(entity: str, opened_at: str, direction: str) -> str:
+    raw = f"{entity}||{opened_at}||{direction}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def normalize_direction(value: Any) -> str:
+    direction = clean_text(value)
+    if direction in {"bullish", "strong_bullish", "bearish", "strong_bearish", "neutral", "no_trade"}:
+        return direction
+    return "neutral"
+
+
+def direction_side(direction: str) -> str:
+    if direction in {"bullish", "strong_bullish"}:
+        return "long"
+    if direction in {"bearish", "strong_bearish"}:
+        return "short"
+    return "flat"
+
+
+def allowed_direction(cfg: Dict[str, Any], direction: str) -> bool:
+    allowed = set(cfg.get("allowed_directions", []))
+    if direction not in allowed:
+        return False
+
+    side = direction_side(direction)
+
+    if side == "long" and not bool(cfg.get("allow_long", True)):
+        return False
+
+    if side == "short" and not bool(cfg.get("allow_short", False)):
+        return False
+
+    return side in {"long", "short"}
+
+
+def confidence_threshold_for_direction(cfg: Dict[str, Any], direction: str) -> float:
+    if direction == "bullish":
+        return safe_float(cfg.get("min_confidence_bullish", 0.25), 0.25)
+    if direction == "strong_bullish":
+        return safe_float(cfg.get("min_confidence_strong_bullish", 0.45), 0.45)
+    if direction == "bearish":
+        return safe_float(cfg.get("min_confidence_bearish", 0.25), 0.25)
+    if direction == "strong_bearish":
+        return safe_float(cfg.get("min_confidence_strong_bearish", 0.45), 0.45)
+    return 1.0
+
+
+def effective_position_size_usd(cfg: Dict[str, Any], row: Dict[str, Any]) -> float:
+    """
+    Hybrid sizing:
+    1. Try trade_sizing_engine (primary)
+    2. Fallback to confidence-based sizing (secondary)
+    """
+
+    from pathlib import Path
+    import json
+
+    SIZING_PATH = Path("/opt/toknclaw/data/analytics/trade_sizing.json")
+
+    entity = str(row.get("entity", "")).upper()
+
+    # ---------------------------------------------------
+    # 🔴 PRIMARY: trade_sizing_engine
+    # ---------------------------------------------------
+    if SIZING_PATH.exists():
+        try:
+            with open(SIZING_PATH) as f:
+                data = json.load(f)
+
+            for r in data.get("rows", []):
+                if str(r.get("entity", "")).upper() == entity:
+                    size = float(r.get("recommended_position_usd", 0))
+
+                    if size > 0:
+                        return round(size, 4)
+
+        except Exception as e:
+            print(f"[SIZING] fallback due to error: {e}")
+
+    # ---------------------------------------------------
+    # 🔴 FALLBACK: existing confidence sizing
+    # ---------------------------------------------------
+
+    base_size = safe_float(cfg.get("base_position_size_usd", 250.0), 250.0)
+
+    if not bool(cfg.get("confidence_position_sizing", True)):
+        return round(base_size, 4)
+
+    confidence = safe_float(row.get("confidence"), 0.0)
+
+    nonlinear_component = confidence ** 2
+    curve_strength = 2.5
+    multiplier = 1.0 + (nonlinear_component * curve_strength)
+
+    multiplier_cap = safe_float(cfg.get("confidence_size_multiplier_cap", 2.2), 2.2)
+    multiplier = min(multiplier, multiplier_cap)
+
+    size = base_size * multiplier
+    max_size = safe_float(cfg.get("max_position_size_usd", 700.0), 700.0)
+
+    return round(min(size, max_size), 4)
+
+def trade_row_rank(row: Dict[str, Any]) -> Tuple[float, float]:
+    return (
+        safe_float(row.get("priority_score"), 0.0),
+        safe_float(row.get("confidence"), 0.0),
+    )
+
+# ---------------------------------------------------
+# LOADERS
+# ---------------------------------------------------
+
+def load_snapshot() -> Dict[str, Any]:
+    primary = read_json_file(
+        Path("/opt/toknclaw/data/snapshots/latest_snapshot_trading.json"), {}
+    )
+
+    if isinstance(primary, dict) and primary:
+        return primary
+
+    # fallback to full snapshot only if needed
+    fallback = read_json_file(
+        Path("/opt/toknclaw/data/snapshots/latest_snapshot.json"), {}
+    )
+
+    return fallback if isinstance(fallback, dict) else {}
+
+def load_price_history() -> Dict[str, Any]:
+    data = read_json_file(PRICE_HISTORY_PATH, {})
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def empty_state(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    starting_cash = safe_float(cfg.get("starting_cash_usd", 10000.0), 10000.0)
+
+    return {
+        "schema_version": 4,
+        "updated_at": now_iso(),
+        "engine_status": {
+            "status": "ok",
+            "last_run_at": now_iso(),
+            "last_error": None,
+        },
+        "portfolio": {
+            "starting_cash_usd": starting_cash,
+            "cash_usd": starting_cash,
+            "equity_usd": starting_cash,
+            "realized_pnl_usd": 0.0,
+            "unrealized_pnl_usd": 0.0,
+            "gross_exposure_usd": 0.0,
+            "open_position_count": 0,
+            "closed_position_count": 0,
+            "win_count": 0,
+            "loss_count": 0,
+            "flat_count": 0,
+        },
+        "open_positions": {},
+        "closed_positions": [],
+        "decision_log": [],
+        "activity_log": [],
+        "cooldowns": {},
+        "summary": {
+            "decisions_seen": 0,
+            "positions_opened": 0,
+            "positions_closed": 0,
+            "skipped_duplicate": 0,
+            "skipped_no_price": 0,
+            "skipped_capacity": 0,
+            "skipped_cooldown": 0,
+            "skipped_not_allowed_entity": 0,
+            "skipped_direction_not_allowed": 0,
+            "skipped_low_confidence": 0,
+            "closed_take_profit": 0,
+            "closed_stop_loss": 0,
+            "closed_max_hold": 0,
+            "closed_direction_flip": 0,
+            "closed_neutral_signal": 0,
+            "closed_no_trade_signal": 0,
+            "closed_confidence_decay": 0,
+            "closed_rotation_replace": 0,
+            "positions_rotated_out": 0,
+        },
+    }
+
+
+def load_state(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    data = read_json_file(STATE_PATH, empty_state(cfg))
+    if not isinstance(data, dict):
+        return empty_state(cfg)
+
+    baseline = empty_state(cfg)
+
+    for key, value in baseline.items():
+        if key not in data:
+            data[key] = value
+
+    if not isinstance(data.get("open_positions"), dict):
+        data["open_positions"] = {}
+
+    if not isinstance(data.get("closed_positions"), list):
+        data["closed_positions"] = []
+
+    if not isinstance(data.get("decision_log"), list):
+        data["decision_log"] = []
+
+    if not isinstance(data.get("activity_log"), list):
+        data["activity_log"] = []
+
+    if not isinstance(data.get("cooldowns"), dict):
+        data["cooldowns"] = {}
+
+    if not isinstance(data.get("portfolio"), dict):
+        data["portfolio"] = baseline["portfolio"]
+
+    if not isinstance(data.get("summary"), dict):
+        data["summary"] = baseline["summary"]
+
+    if not isinstance(data.get("engine_status"), dict):
+        data["engine_status"] = baseline["engine_status"]
+
+    return data
+
+# ---------------------------------------------------
+# PRICE HELPERS
+# ---------------------------------------------------
+
+def latest_price_for_entity(price_history: Dict[str, Any], entity: str) -> Optional[Dict[str, Any]]:
+    tokens = price_history.get("tokens", {})
+    if not isinstance(tokens, dict):
+        return None
+
+    rows = tokens.get(entity)
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    valid_rows = [r for r in rows if isinstance(r, dict)]
+    if not valid_rows:
+        return None
+
+    valid_rows.sort(key=lambda x: clean_text(x.get("timestamp")))
+    return valid_rows[-1]
+
+
+def price_point_ok(row: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(row, dict):
+        return False
+
+    price = safe_float(row.get("price_usd"), 0.0)
+    return price > 0.0
+
+# ---------------------------------------------------
+# SIGNAL EXTRACTORS
+# ---------------------------------------------------
+
+def extract_trade_rows(snapshot: Dict[str, Any], cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+
+    if bool(cfg.get("trade_signal_rows_primary", True)):
+        trade_signals = snapshot.get("trade_signals", {})
+        if isinstance(trade_signals, dict):
+            rows = trade_signals.get("rows", [])
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+
+                    entity = clean_upper(row.get("entity"))
+                    direction = normalize_direction(row.get("direction"))
+                    confidence = safe_float(row.get("confidence"), 0.0)
+
+                    out.append(
+                        {
+                            "entity": entity,
+                            "direction": direction,
+                            "confidence": confidence,
+                            "priority_score": safe_float(row.get("priority_score"), 0.0),
+                            "setup_family": clean_text(row.get("setup_family")),
+                            "entry_style": clean_text(row.get("entry_style")),
+                            "no_trade": safe_bool(row.get("no_trade"), False),
+                            "reasons": [clean_text(x) for x in row.get("reasons", []) if clean_text(x)],
+                            "agent_notes": [clean_text(x) for x in row.get("agent_notes", []) if clean_text(x)],
+                            "title": f"{entity} trade signal",
+                            "summary": ", ".join([clean_text(x) for x in row.get("reasons", []) if clean_text(x)]),
+                            "signal_copy": deepcopy(row),
+                            "source_type": "trade_signal_row",
+                        }
+                    )
+
+    if out:
+        out.sort(key=lambda row: trade_row_rank(row), reverse=True)
+        return out
+
+    if not bool(cfg.get("fallback_to_snapshot_signals", False)):
+        return out
+
+    raw_rows = snapshot.get("signals", [])
+    if not isinstance(raw_rows, list):
+        return out
+
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            continue
+
+        signal_type = clean_text(row.get("signal_type"))
+        entity = clean_upper(row.get("entity"))
+
+        if signal_type in {
+            "solana_trade_decision",
+            "solana_trade_candidate",
+        }:
+            out.append(
+                {
+                    "entity": entity,
+                    "direction": "bullish",
+                    "confidence": safe_float(row.get("confidence"), 0.0),
+                    "priority_score": safe_float(row.get("confidence"), 0.0),
+                    "setup_family": "fallback_signal",
+                    "entry_style": "balanced",
+                    "no_trade": False,
+                    "reasons": [],
+                    "agent_notes": [],
+                    "title": clean_text(row.get("title")),
+                    "summary": clean_text(row.get("summary")),
+                    "signal_copy": deepcopy(row),
+                    "source_type": signal_type,
+                }
+            )
+
+    out.sort(key=lambda row: trade_row_rank(row), reverse=True)
+    return out
+
+# ---------------------------------------------------
+# LOGGING
+# ---------------------------------------------------
+
+def append_activity(
+    state: Dict[str, Any],
+    cfg: Dict[str, Any],
+    event_type: str,
+    message: str,
+    payload: Optional[Dict[str, Any]] = None,
+) -> None:
+    activity_log = state.setdefault("activity_log", [])
+    if not isinstance(activity_log, list):
+        state["activity_log"] = []
+        activity_log = state["activity_log"]
+
+    activity_log.append(
+        {
+            "timestamp": now_iso(),
+            "event_type": clean_text(event_type),
+            "message": clean_text(message),
+            "payload": payload or {},
+        }
+    )
+
+    max_activity = safe_int(cfg.get("max_activity_log", 500), 500)
+    if len(activity_log) > max_activity:
+        state["activity_log"] = activity_log[-max_activity:]
+
+
+def append_decision_log(state: Dict[str, Any], cfg: Dict[str, Any], row: Dict[str, Any], outcome: str) -> None:
+    decision_log = state.setdefault("decision_log", [])
+    if not isinstance(decision_log, list):
+        state["decision_log"] = []
+        decision_log = state["decision_log"]
+
+    decision_log.append(
+        {
+            "timestamp": now_iso(),
+            "entity": clean_upper(row.get("entity")),
+            "direction": normalize_direction(row.get("direction")),
+            "confidence": safe_float(row.get("confidence"), 0.0),
+            "priority_score": safe_float(row.get("priority_score"), 0.0),
+            "setup_family": clean_text(row.get("setup_family")),
+            "entry_style": clean_text(row.get("entry_style")),
+            "title": clean_text(row.get("title")),
+            "summary": clean_text(row.get("summary")),
+            "outcome": clean_text(outcome),
+        }
+    )
+
+    max_log = safe_int(cfg.get("max_decision_log", 1000), 1000)
+    if len(decision_log) > max_log:
+        state["decision_log"] = decision_log[-max_log:]
+
+# ---------------------------------------------------
+# OPEN / CLOSE LOGIC
+# ---------------------------------------------------
+
+def entity_in_cooldown(state: Dict[str, Any], entity: str, cfg: Dict[str, Any]) -> bool:
+    cooldowns = state.get("cooldowns", {})
+    if not isinstance(cooldowns, dict):
+        return False
+
+    raw_until = cooldowns.get(entity)
+    until_dt = parse_dt(raw_until)
+    if until_dt is None:
+        return False
+
+    return utc_now() < until_dt
+
+
+def set_cooldown(state: Dict[str, Any], entity: str, cfg: Dict[str, Any]) -> None:
+    cooldown_minutes = safe_int(cfg.get("cooldown_minutes_after_close", 45), 45)
+    until_dt = utc_now() + timedelta(minutes=cooldown_minutes)
+
+    cooldowns = state.setdefault("cooldowns", {})
+    if not isinstance(cooldowns, dict):
+        state["cooldowns"] = {}
+        cooldowns = state["cooldowns"]
+
+    cooldowns[entity] = until_dt.isoformat()
+
+
+def open_positions_count(state: Dict[str, Any]) -> int:
+    open_positions = state.get("open_positions", {})
+    if not isinstance(open_positions, dict):
+        return 0
+    return len(open_positions)
+
+
+def count_positions_for_entity(state: Dict[str, Any], entity: str) -> int:
+    open_positions = state.get("open_positions", {})
+    if not isinstance(open_positions, dict):
+        return 0
+
+    count = 0
+    for position in open_positions.values():
+        if not isinstance(position, dict):
+            continue
+        if clean_upper(position.get("entity")) == entity:
+            count += 1
+    return count
+
+
+def find_open_position_for_entity(state: Dict[str, Any], entity: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    open_positions = state.get("open_positions", {})
+    if not isinstance(open_positions, dict):
+        return None
+
+    entity = clean_upper(entity)
+
+    for trade_id, position in open_positions.items():
+        if not isinstance(position, dict):
+            continue
+        if clean_upper(position.get("entity")) == entity:
+            return trade_id, position
+
+    return None
+
+
+def apply_entry_costs(price_usd: float, cfg: Dict[str, Any], side: str) -> float:
+    slippage_bps = safe_float(cfg.get("slippage_bps_entry", 8), 8.0)
+    fee_bps = safe_float(cfg.get("fee_bps_entry", 4), 4.0)
+    total_bps = slippage_bps + fee_bps
+
+    if side == "long":
+        return price_usd * (1.0 + total_bps / 10000.0)
+
+    if side == "short":
+        return price_usd * (1.0 - total_bps / 10000.0)
+
+    return price_usd
+
+
+def apply_exit_costs(price_usd: float, cfg: Dict[str, Any], side: str) -> float:
+    slippage_bps = safe_float(cfg.get("slippage_bps_exit", 8), 8.0)
+    fee_bps = safe_float(cfg.get("fee_bps_exit", 4), 4.0)
+    total_bps = slippage_bps + fee_bps
+
+    if side == "long":
+        return price_usd * (1.0 - total_bps / 10000.0)
+
+    if side == "short":
+        return price_usd * (1.0 + total_bps / 10000.0)
+
+    return price_usd
+
+
+def pnl_pct_for_position(side: str, entry_price: float, mark_price: float) -> float:
+    if entry_price <= 0:
+        return 0.0
+
+    if side == "long":
+        return ((mark_price / entry_price) - 1.0) * 100.0
+
+    if side == "short":
+        return ((entry_price / mark_price) - 1.0) * 100.0 if mark_price > 0 else 0.0
+
+    return 0.0
+
+
+def pnl_usd_for_position(side: str, entry_price: float, mark_price: float, quantity: float) -> float:
+    if side == "long":
+        return (mark_price - entry_price) * quantity
+
+    if side == "short":
+        return (entry_price - mark_price) * quantity
+
+    return 0.0
+
+
+def current_trade_row_for_entity(trade_rows: List[Dict[str, Any]], entity: str) -> Optional[Dict[str, Any]]:
+    entity = clean_upper(entity)
+
+    for row in trade_rows:
+        if clean_upper(row.get("entity")) == entity:
+            return row
+
+    return None
+
+
+def weakest_open_position(state: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any], float, float]]:
+    open_positions = state.get("open_positions", {})
+    if not isinstance(open_positions, dict) or not open_positions:
+        return None
+
+    weakest = None
+
+    for trade_id, position in open_positions.items():
+        if not isinstance(position, dict):
+            continue
+
+        priority_score = safe_float(position.get("priority_score"), 0.0)
+        confidence = safe_float(position.get("confidence"), 0.0)
+
+        key = (priority_score, confidence)
+
+        if weakest is None or key < weakest[2:]:
+            weakest = (trade_id, position, priority_score, confidence)
+
+    return weakest
+
+
+def should_rotate_for_candidate(state: Dict[str, Any], cfg: Dict[str, Any], candidate_row: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
+    if not bool(cfg.get("rotation_enabled", True)):
+        return None
+
+    candidate_priority = safe_float(candidate_row.get("priority_score"), 0.0)
+    candidate_confidence = safe_float(candidate_row.get("confidence"), 0.0)
+
+    same_entity = find_open_position_for_entity(state, candidate_row.get("entity"))
+    if same_entity and bool(cfg.get("replace_weaker_same_symbol", True)):
+        trade_id, position = same_entity
+        current_direction = normalize_direction(position.get("direction"))
+        candidate_direction = normalize_direction(candidate_row.get("direction"))
+        current_priority = safe_float(position.get("priority_score"), 0.0)
+        current_confidence = safe_float(position.get("confidence"), 0.0)
+
+        if current_direction != candidate_direction:
+            priority_edge = candidate_priority - current_priority
+            confidence_edge = candidate_confidence - current_confidence
+
+            if (
+                priority_edge >= safe_float(cfg.get("min_rotation_priority_edge", 0.15), 0.15)
+                or confidence_edge >= safe_float(cfg.get("min_rotation_confidence_edge", 0.08), 0.08)
+            ):
+                return trade_id, position
+
+    if open_positions_count(state) < safe_int(cfg.get("max_open_positions", 4), 4):
+        return None
+
+    weakest = weakest_open_position(state)
+    if weakest is None:
+        return None
+
+    trade_id, position, weakest_priority, weakest_confidence = weakest
+
+    priority_edge = candidate_priority - weakest_priority
+    confidence_edge = candidate_confidence - weakest_confidence
+
+    if (
+        priority_edge >= safe_float(cfg.get("min_rotation_priority_edge", 0.15), 0.15)
+        or confidence_edge >= safe_float(cfg.get("min_rotation_confidence_edge", 0.08), 0.08)
+    ):
+        return trade_id, position
+
+    return None
+
+
+def close_position(
+    state: Dict[str, Any],
+    cfg: Dict[str, Any],
+    trade_id: str,
+    position: Dict[str, Any],
+    exit_mark_price_usd: float,
+    close_reason: str,
+) -> None:
+    open_positions = state.get("open_positions", {})
+    if not isinstance(open_positions, dict):
+        return
+
+    portfolio = state.get("portfolio", {})
+    quantity = safe_float(position.get("quantity"), 0.0)
+    entry_price = safe_float(position.get("entry_price_usd"), 0.0)
+    side = clean_text(position.get("side"))
+
+    exit_price = apply_exit_costs(exit_mark_price_usd, cfg, side)
+    exit_value_usd = quantity * exit_price
+    realized_pnl_usd = pnl_usd_for_position(side, entry_price, exit_price, quantity)
+    realized_pnl_pct = pnl_pct_for_position(side, entry_price, exit_price)
+
+    closed_position = deepcopy(position)
+    closed_position["status"] = "closed"
+    closed_position["updated_at"] = now_iso()
+    closed_position["closed_at"] = now_iso()
+    closed_position["close_reason"] = clean_text(close_reason)
+    closed_position["exit_price_usd"] = round(exit_price, 12)
+    closed_position["mark_price_usd"] = round(exit_mark_price_usd, 12)
+    closed_position["market_value_usd"] = round(exit_value_usd, 4)
+    closed_position["unrealized_pnl_usd"] = 0.0
+    closed_position["unrealized_pnl_pct"] = 0.0
+    closed_position["realized_pnl_usd"] = round(realized_pnl_usd, 4)
+    closed_position["realized_pnl_pct"] = round(realized_pnl_pct, 4)
+
+    closed_positions = state.setdefault("closed_positions", [])
+    closed_positions.append(closed_position)
+
+    max_closed = safe_int(cfg.get("max_closed_positions", 5000), 5000)
+    if len(closed_positions) > max_closed:
+        state["closed_positions"] = closed_positions[-max_closed:]
+
+    portfolio["cash_usd"] = round(safe_float(portfolio.get("cash_usd", 0.0), 0.0) + exit_value_usd, 4)
+    portfolio["realized_pnl_usd"] = round(
+        safe_float(portfolio.get("realized_pnl_usd", 0.0), 0.0) + realized_pnl_usd,
+        4,
+    )
+
+    state["summary"]["positions_closed"] = safe_int(state["summary"].get("positions_closed", 0), 0) + 1
+
+    if realized_pnl_usd > 0:
+        portfolio["win_count"] = safe_int(portfolio.get("win_count", 0), 0) + 1
+    elif realized_pnl_usd < 0:
+        portfolio["loss_count"] = safe_int(portfolio.get("loss_count", 0), 0) + 1
+    else:
+        portfolio["flat_count"] = safe_int(portfolio.get("flat_count", 0), 0) + 1
+
+    summary_key = f"closed_{clean_text(close_reason)}"
+    state["summary"][summary_key] = safe_int(state["summary"].get(summary_key, 0), 0) + 1
+
+    set_cooldown(state, clean_upper(position.get("entity")), cfg)
+
+    append_activity(
+        state,
+        cfg,
+        "position_closed",
+        f"Closed paper {side} for {clean_upper(position.get('entity'))}",
+        {
+            "trade_id": trade_id,
+            "entity": clean_upper(position.get("entity")),
+            "close_reason": clean_text(close_reason),
+            "realized_pnl_usd": round(realized_pnl_usd, 4),
+            "realized_pnl_pct": round(realized_pnl_pct, 4),
+        },
+    )
+
+    if trade_id in open_positions:
+        del open_positions[trade_id]
+
+# ---------------------------------------------------
+# FLOW EXIT RULES
+# ---------------------------------------------------
+
+FLOW_EXIT_RULES = {
+    "long": [
+        ("oi_build_decel", "flow_deceleration"),
+        ("oi_build_fading", "flow_deceleration"),
+        ("oi_unwind_accel", "flow_unwind"),
+        ("oi_unwind_base", "flow_unwind"),
+        ("long_flush", "flow_liquidation_risk"),
+        ("bearish_confirm", "flow_bearish_confirm"),
+    ],
+    "short": [
+        ("oi_build_accel", "flow_reversal"),
+        ("oi_accel_base", "flow_reversal"),
+        ("short_flush", "flow_liquidation_risk"),
+        ("bullish_confirm", "flow_bullish_confirm"),
+    ]
+}
+
+
+def should_close_on_flow(position: Dict[str, Any], current_row: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(current_row, dict):
+        return None
+
+    side = clean_text(position.get("side"))
+    reasons = current_row.get("reasons", [])
+
+    if not isinstance(reasons, list):
+        return None
+
+    rules = FLOW_EXIT_RULES.get(side, [])
+
+    for key, label in rules:
+        for reason in reasons:
+            if key in clean_text(reason):
+                return label
+
+    return None
+
+# ---------------------------------------------------
+# UPDATE / CLOSE LOGIC
+# ---------------------------------------------------
+
+def update_open_positions(
+    state: Dict[str, Any],
+    cfg: Dict[str, Any],
+    price_history: Dict[str, Any],
+    trade_rows: List[Dict[str, Any]],
+) -> None:
+    open_positions = state.get("open_positions", {})
+    if not isinstance(open_positions, dict):
+        return
+
+    to_close: List[tuple[str, Dict[str, Any], float, str]] = []
+
+    for trade_id, position in list(open_positions.items()):
+        if not isinstance(position, dict):
+            continue
+
+        entity = clean_upper(position.get("entity"))
+        side = clean_text(position.get("side"))
+        latest_price = latest_price_for_entity(price_history, entity)
+
+        if not price_point_ok(latest_price):
+            continue
+
+        mark_price = safe_float(latest_price.get("price_usd"), 0.0)
+        quantity = safe_float(position.get("quantity"), 0.0)
+        entry_price = safe_float(position.get("entry_price_usd"), 0.0)
+
+        unrealized_pnl_usd = pnl_usd_for_position(side, entry_price, mark_price, quantity)
+        unrealized_pnl_pct = pnl_pct_for_position(side, entry_price, mark_price)
+
+        position["updated_at"] = now_iso()
+        position["mark_price_usd"] = round(mark_price, 12)
+        position["market_value_usd"] = round(mark_price * quantity, 4)
+        position["unrealized_pnl_usd"] = round(unrealized_pnl_usd, 4)
+        position["unrealized_pnl_pct"] = round(unrealized_pnl_pct, 4)
+
+        opened_at = parse_dt(position.get("opened_at"))
+        age_minutes = 0.0
+        if opened_at is not None:
+            age_minutes = (utc_now() - opened_at).total_seconds() / 60.0
+
+        if side == "long":
+            take_profit_pct = safe_float(cfg.get("take_profit_pct_long", 6.0), 6.0)
+            stop_loss_pct = safe_float(cfg.get("stop_loss_pct_long", -3.0), -3.0)
+            hold_confidence_floor = safe_float(cfg.get("min_live_confidence_to_hold_long", 0.25), 0.25)
+        else:
+            take_profit_pct = safe_float(cfg.get("take_profit_pct_short", 6.0), 6.0)
+            stop_loss_pct = safe_float(cfg.get("stop_loss_pct_short", -3.0), -3.0)
+            hold_confidence_floor = safe_float(cfg.get("min_live_confidence_to_hold_short", 0.25), 0.25)
+
+        current_row = current_trade_row_for_entity(trade_rows, entity)
+        current_direction = "neutral"
+        current_confidence = 0.0
+        current_no_trade = False
+
+        flow_exit_reason = should_close_on_flow(position, current_row)
+        if flow_exit_reason:
+            to_close.append((trade_id, position, mark_price, flow_exit_reason))
+            continue
+
+        if isinstance(current_row, dict):
+            current_direction = normalize_direction(current_row.get("direction"))
+            current_confidence = safe_float(current_row.get("confidence"), 0.0)
+            current_no_trade = safe_bool(current_row.get("no_trade"), False)
+
+        if bool(cfg.get("close_on_direction_flip", True)):
+            if side == "long" and current_direction in {"bearish", "strong_bearish"}:
+                to_close.append((trade_id, position, mark_price, "direction_flip"))
+                continue
+
+            if side == "short" and current_direction in {"bullish", "strong_bullish"}:
+                to_close.append((trade_id, position, mark_price, "direction_flip"))
+                continue
+
+        if bool(cfg.get("close_on_no_trade_signal", True)) and current_no_trade:
+            to_close.append((trade_id, position, mark_price, "no_trade_signal"))
+            continue
+
+        if bool(cfg.get("close_on_neutral_signal", True)) and current_direction == "neutral":
+            to_close.append((trade_id, position, mark_price, "neutral_signal"))
+            continue
+
+        if bool(cfg.get("close_on_confidence_decay", True)) and current_confidence < hold_confidence_floor:
+            to_close.append((trade_id, position, mark_price, "confidence_decay"))
+            continue
+
+        if unrealized_pnl_pct >= take_profit_pct:
+            to_close.append((trade_id, position, mark_price, "take_profit"))
+            continue
+
+        if unrealized_pnl_pct <= stop_loss_pct:
+            to_close.append((trade_id, position, mark_price, "stop_loss"))
+            continue
+
+        # emergency backstop only
+        max_hold_minutes = safe_int(cfg.get("max_hold_minutes", 9999), 9999)
+        if max_hold_minutes > 0 and age_minutes >= max_hold_minutes:
+            to_close.append((trade_id, position, mark_price, "max_hold"))
+            continue
+
+    for trade_id, position, mark_price, close_reason in to_close:
+        close_position(state, cfg, trade_id, position, mark_price, close_reason)
+
+# ---------------------------------------------------
+# ENTRY LOGIC
+# ---------------------------------------------------
+
+def maybe_open_position(
+    state: Dict[str, Any],
+    cfg: Dict[str, Any],
+    price_history: Dict[str, Any],
+    row: Dict[str, Any],
+) -> None:
+    entity = clean_upper(row.get("entity"))
+    direction = normalize_direction(row.get("direction"))
+    side = direction_side(direction)
+    confidence = safe_float(row.get("confidence"), 0.0)
+
+    # ---------------------------------------------------
+    # 🔴 PRIORITY FILTER (PREVENT WEAK TRADES)
+    # ---------------------------------------------------
+
+    priority_score = safe_float(row.get("priority_score"), 0.0)
+
+    if priority_score < 0.25:
+        append_decision_log(state, cfg, row, "skipped_low_priority")
+        return
+
+    state["summary"]["decisions_seen"] = safe_int(state["summary"].get("decisions_seen", 0), 0) + 1
+
+    if safe_bool(row.get("no_trade"), False) or direction in {"no_trade", "neutral"}:
+        append_decision_log(state, cfg, row, "skipped_no_trade")
+        return
+
+    if entity not in set(cfg.get("allowed_entities", [])):
+        state["summary"]["skipped_not_allowed_entity"] = safe_int(
+            state["summary"].get("skipped_not_allowed_entity", 0), 0
+        ) + 1
+        append_decision_log(state, cfg, row, "skipped_not_allowed_entity")
+        return
+
+    if not allowed_direction(cfg, direction):
+        state["summary"]["skipped_direction_not_allowed"] = safe_int(
+            state["summary"].get("skipped_direction_not_allowed", 0), 0
+        ) + 1
+        append_decision_log(state, cfg, row, "skipped_direction_not_allowed")
+        return
+
+    min_confidence = confidence_threshold_for_direction(cfg, direction)
+    if confidence < min_confidence:
+        state["summary"]["skipped_low_confidence"] = safe_int(
+            state["summary"].get("skipped_low_confidence", 0), 0
+        ) + 1
+        append_decision_log(state, cfg, row, "skipped_low_confidence")
+        return
+
+    if entity_in_cooldown(state, entity, cfg):
+        state["summary"]["skipped_cooldown"] = safe_int(state["summary"].get("skipped_cooldown", 0), 0) + 1
+        append_decision_log(state, cfg, row, "skipped_cooldown")
+        return
+
+    # duplicate protection
+    existing_same_entity = find_open_position_for_entity(state, entity)
+    if existing_same_entity is not None:
+        trade_id, position = existing_same_entity
+        current_direction = normalize_direction(position.get("direction"))
+        current_priority = safe_float(position.get("priority_score"), 0.0)
+        current_confidence = safe_float(position.get("confidence"), 0.0)
+
+        if current_direction == direction:
+            state["summary"]["skipped_duplicate"] = safe_int(state["summary"].get("skipped_duplicate", 0), 0) + 1
+            append_decision_log(state, cfg, row, "skipped_duplicate_same_direction")
+            return
+
+        priority_edge = safe_float(row.get("priority_score"), 0.0) - current_priority
+        confidence_edge = confidence - current_confidence
+
+        if not bool(cfg.get("replace_weaker_same_symbol", True)):
+            state["summary"]["skipped_duplicate"] = safe_int(state["summary"].get("skipped_duplicate", 0), 0) + 1
+            append_decision_log(state, cfg, row, "skipped_duplicate_opp_direction")
+            return
+
+        if (
+            priority_edge >= safe_float(cfg.get("min_rotation_priority_edge", 0.15), 0.15)
+            or confidence_edge >= safe_float(cfg.get("min_rotation_confidence_edge", 0.08), 0.08)
+        ):
+            latest_price = latest_price_for_entity(price_history, entity)
+            if price_point_ok(latest_price):
+                close_position(
+                    state=state,
+                    cfg=cfg,
+                    trade_id=trade_id,
+                    position=position,
+                    exit_mark_price_usd=safe_float(latest_price.get("price_usd"), 0.0),
+                    close_reason="rotation_replace",
+                )
+                state["summary"]["positions_rotated_out"] = safe_int(
+                    state["summary"].get("positions_rotated_out", 0),
+                    0,
+                ) + 1
+            else:
+                append_decision_log(state, cfg, row, "skipped_rotation_no_price")
+                return
+        else:
+            state["summary"]["skipped_duplicate"] = safe_int(state["summary"].get("skipped_duplicate", 0), 0) + 1
+            append_decision_log(state, cfg, row, "skipped_weaker_than_existing")
+            return
+
+    max_open_positions = safe_int(cfg.get("max_open_positions", 4), 4)
+    if open_positions_count(state) >= max_open_positions:
+        rotate_target = should_rotate_for_candidate(state, cfg, row)
+
+        if rotate_target is None:
+            state["summary"]["skipped_capacity"] = safe_int(state["summary"].get("skipped_capacity", 0), 0) + 1
+            append_decision_log(state, cfg, row, "skipped_capacity")
+            return
+
+        rotate_trade_id, rotate_position = rotate_target
+        rotate_entity = clean_upper(rotate_position.get("entity"))
+        latest_price = latest_price_for_entity(price_history, rotate_entity)
+
+        if not price_point_ok(latest_price):
+            state["summary"]["skipped_no_price"] = safe_int(state["summary"].get("skipped_no_price", 0), 0) + 1
+            append_decision_log(state, cfg, row, "skipped_rotation_target_no_price")
+            return
+
+        close_position(
+            state=state,
+            cfg=cfg,
+            trade_id=rotate_trade_id,
+            position=rotate_position,
+            exit_mark_price_usd=safe_float(latest_price.get("price_usd"), 0.0),
+            close_reason="rotation_replace",
+        )
+        state["summary"]["positions_rotated_out"] = safe_int(
+            state["summary"].get("positions_rotated_out", 0),
+            0,
+        ) + 1
+
+    latest_price = latest_price_for_entity(price_history, entity)
+    if not price_point_ok(latest_price):
+        state["summary"]["skipped_no_price"] = safe_int(state["summary"].get("skipped_no_price", 0), 0) + 1
+        append_decision_log(state, cfg, row, "skipped_no_price")
+        return
+
+    mark_price = safe_float(latest_price.get("price_usd"), 0.0)
+    entry_price = apply_entry_costs(mark_price, cfg, side)
+    position_size_usd = effective_position_size_usd(cfg, row)
+
+    portfolio = state.get("portfolio", {})
+    cash_usd = safe_float(portfolio.get("cash_usd", 0.0), 0.0)
+
+    if cash_usd < position_size_usd:
+        state["summary"]["skipped_capacity"] = safe_int(state["summary"].get("skipped_capacity", 0), 0) + 1
+        append_decision_log(state, cfg, row, "skipped_insufficient_cash")
+        return
+
+    quantity = position_size_usd / entry_price if entry_price > 0 else 0.0
+    if quantity <= 0:
+        state["summary"]["skipped_no_price"] = safe_int(state["summary"].get("skipped_no_price", 0), 0) + 1
+        append_decision_log(state, cfg, row, "skipped_invalid_quantity")
+        return
+
+    opened_at = now_iso()
+    trade_id = make_trade_id(entity, opened_at, direction)
+
+    position = {
+        "trade_id": trade_id,
+        "status": "open",
+        "entity": entity,
+        "opened_at": opened_at,
+        "updated_at": opened_at,
+        "direction": direction,
+        "side": side,
+        "confidence": confidence,
+        "priority_score": safe_float(row.get("priority_score"), 0.0),
+        "setup_family": clean_text(row.get("setup_family")),
+        "entry_style": clean_text(row.get("entry_style")),
+        "entry_reasons": deepcopy(row.get("reasons", [])),
+        "entry_agent_notes": deepcopy(row.get("agent_notes", [])),
+        "entry_price_usd": round(entry_price, 12),
+        "mark_price_usd": round(mark_price, 12),
+        "position_size_usd": round(position_size_usd, 4),
+        "quantity": round(quantity, 12),
+        "market_value_usd": round(quantity * mark_price, 4),
+        "unrealized_pnl_usd": 0.0,
+        "unrealized_pnl_pct": 0.0,
+        "realized_pnl_usd": 0.0,
+        "close_reason": None,
+        "closed_at": None,
+        "exit_price_usd": None,
+        "source_title": clean_text(row.get("title")),
+        "source_summary": clean_text(row.get("summary")),
+        "source_type": clean_text(row.get("source_type")),
+        "signal_copy": deepcopy(row.get("signal_copy")) if bool(cfg.get("store_signal_copy", True)) else None,
+    }
+
+    open_positions = state.setdefault("open_positions", {})
+    open_positions[trade_id] = position
+
+    portfolio["cash_usd"] = round(cash_usd - position_size_usd, 4)
+
+    state["summary"]["positions_opened"] = safe_int(state["summary"].get("positions_opened", 0), 0) + 1
+
+    append_decision_log(state, cfg, row, "opened")
+    append_activity(
+        state,
+        cfg,
+        "position_opened",
+        f"Opened paper {side} for {entity}",
+        {
+            "trade_id": trade_id,
+            "entity": entity,
+            "direction": direction,
+            "entry_price_usd": position["entry_price_usd"],
+            "position_size_usd": position["position_size_usd"],
+            "confidence": confidence,
+            "priority_score": position["priority_score"],
+            "setup_family": position["setup_family"],
+        },
+    )
+
+# ---------------------------------------------------
+# PORTFOLIO SUMMARY
+# ---------------------------------------------------
+
+def rebuild_portfolio_summary(state: Dict[str, Any]) -> None:
+    portfolio = state.get("portfolio", {})
+    open_positions = state.get("open_positions", {})
+    closed_positions = state.get("closed_positions", [])
+
+    if not isinstance(portfolio, dict):
+        return
+
+    gross_exposure = 0.0
+    unrealized_pnl = 0.0
+
+    if isinstance(open_positions, dict):
+        for position in open_positions.values():
+            if not isinstance(position, dict):
+                continue
+            gross_exposure += safe_float(position.get("market_value_usd"), 0.0)
+            unrealized_pnl += safe_float(position.get("unrealized_pnl_usd"), 0.0)
+
+    cash_usd = safe_float(portfolio.get("cash_usd", 0.0), 0.0)
+    equity_usd = cash_usd + gross_exposure
+
+    portfolio["gross_exposure_usd"] = round(gross_exposure, 4)
+    portfolio["unrealized_pnl_usd"] = round(unrealized_pnl, 4)
+    portfolio["equity_usd"] = round(equity_usd, 4)
+    portfolio["open_position_count"] = len(open_positions) if isinstance(open_positions, dict) else 0
+    portfolio["closed_position_count"] = len(closed_positions) if isinstance(closed_positions, list) else 0
+
+# ---------------------------------------------------
+# MAIN ENGINE
+# ---------------------------------------------------
+
+def build_paper_trading(snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    cfg = load_engine_config()
+    state = load_state(cfg)
+
+    if not bool(cfg.get("enabled", True)):
+        state["engine_status"] = {
+            "status": "disabled",
+            "last_run_at": now_iso(),
+            "last_error": None,
+        }
+        return state
+
+    try:
+        snapshot = snapshot if isinstance(snapshot, dict) else load_snapshot()
+        price_history = load_price_history()
+
+        trade_rows = extract_trade_rows(snapshot, cfg)
+
+        debug_log(
+            cfg,
+            f"trade_rows={len(trade_rows)} "
+            f"allowed_entities={len(cfg.get('allowed_entities', []))} "
+            f"allowed_directions={cfg.get('allowed_directions', [])}"
+        )
+
+        update_open_positions(
+            state=state,
+            cfg=cfg,
+            price_history=price_history,
+            trade_rows=trade_rows,
+        )
+
+        for row in trade_rows:
+            maybe_open_position(
+                state=state,
+                cfg=cfg,
+                price_history=price_history,
+                row=row,
+            )
+
+        rebuild_portfolio_summary(state)
+
+        state["updated_at"] = now_iso()
+        state["engine_status"] = {
+            "status": "ok",
+            "last_run_at": now_iso(),
+            "last_error": None,
+        }
+
+        write_json_atomic(STATE_PATH, STATE_TMP_PATH, state)
+
+        debug_log(
+            cfg,
+            "open_positions="
+            + str(state["portfolio"].get("open_position_count", 0))
+            + " closed_positions="
+            + str(state["portfolio"].get("closed_position_count", 0))
+            + " equity_usd="
+            + str(state["portfolio"].get("equity_usd", 0.0))
+        )
+
+        return state
+
+    except Exception as e:
+        state["updated_at"] = now_iso()
+        state["engine_status"] = {
+            "status": "error",
+            "last_run_at": now_iso(),
+            "last_error": str(e),
+        }
+        write_json_atomic(STATE_PATH, STATE_TMP_PATH, state)
+        raise
+
+# ---------------------------------------------------
+# ENTRYPOINT
+# ---------------------------------------------------
+
+def main() -> None:
+    build_paper_trading()
+
+
+if __name__ == "__main__":
+    main()

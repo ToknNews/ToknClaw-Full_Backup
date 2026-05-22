@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""
+# ============================================================
+# 🦞 TOKNCLAW — MARKET INTELLIGENCE ENGINE
+# ============================================================
+#
+# ████████╗ ██████╗ ██╗  ██╗███╗   ██╗ ██████╗██╗      █████╗ ██╗    ██╗
+# ╚══██╔══╝██╔═══██╗██║ ██╔╝████╗  ██║██╔════╝██║     ██╔══██╗██║    ██║
+#    ██║   ██║   ██║█████╔╝ ██╔██╗ ██║██║     ██║     ███████║██║ █╗ ██║
+#    ██║   ██║   ██║██╔═██╗ ██║╚██╗██║██║     ██║     ██╔══██║██║███╗██║
+#    ██║   ╚██████╔╝██║  ██╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
+#    ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+#
+# SYSTEM: ToknClaw Intelligence Layer
+# MODULE: trade_signal_engine
+# PURPOSE: Cross-asset trade signal synthesis with allocator integration
+#
+# AUTHOR: TOKN SYSTEM
+# ============================================================
+"""
+
+from __future__ import annotations
+from typing import Any, Dict, List
+
+
+# -------------------------------------------------------
+# Helpers
+# -------------------------------------------------------
+
+def _safe_list(v): return v if isinstance(v, list) else []
+def _safe_dict(v): return v if isinstance(v, dict) else {}
+def _safe_float(v, d=0.0):
+    try: return float(v)
+    except: return d
+def _clamp(v, low=0.0, high=1.0): return max(low, min(high, v))
+
+
+# -------------------------------------------------------
+# Index maps
+# -------------------------------------------------------
+
+def _quant_map(snapshot):
+    return {
+        str(r.get("entity")).upper(): r
+        for r in _safe_list(snapshot.get("quant_factors"))
+        if r.get("entity")
+    }
+
+def _velocity_map(snapshot):
+    return {
+        str(r.get("entity")).upper(): r
+        for r in _safe_list(_safe_dict(snapshot.get("signal_velocity")).get("entities"))
+        if r.get("entity")
+    }
+
+def _signals_by_entity(snapshot):
+    out = {}
+    for s in _safe_list(snapshot.get("signals")):
+        s = _safe_dict(s)
+        e = str(s.get("entity") or "").upper()
+        if e:
+            out.setdefault(e, []).append(s)
+    return out
+
+def _allocator_map(snapshot):
+    out = {}
+    for s in _safe_list(snapshot.get("signals")):
+        st = str(s.get("signal_type") or "")
+        if st not in {
+            "solana_trade_decision",
+            "solana_trade_candidate",
+            "solana_trade_avoid"
+        }:
+            continue
+        e = str(s.get("entity") or "").upper()
+        if e:
+            out.setdefault(e, []).append(s)
+    return out
+
+
+# -------------------------------------------------------
+# Core scoring
+# -------------------------------------------------------
+
+def _direction(b, s):
+    diff = b - s
+    if diff >= 0.35: return "strong_bullish"
+    if diff >= 0.12: return "bullish"
+    if diff <= -0.35: return "strong_bearish"
+    if diff <= -0.12: return "bearish"
+    return "neutral"
+
+def _confidence(b, s):
+    return _clamp(abs(b - s) * 0.6 + max(b, s) * 0.4)
+
+
+# -------------------------------------------------------
+# Main Engine
+# -------------------------------------------------------
+
+def build_trade_signals(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+
+    snapshot = _safe_dict(snapshot)
+
+    quant = _quant_map(snapshot)
+    velocity = _velocity_map(snapshot)
+    signals = _signals_by_entity(snapshot)
+    allocator = _allocator_map(snapshot)
+
+    rows = []
+
+    for entity, q in quant.items():
+
+        momentum = _safe_float(q.get("momentum_factor"))
+        liquidity = _safe_float(q.get("liquidity_factor"))
+        fundamentals = _safe_float(q.get("fundamentals_factor"))
+        stress = _safe_float(q.get("stress_factor"))
+        policy = _safe_float(q.get("policy_risk_factor"))
+
+        # -----------------------------
+        # BASE SIGNAL
+        # -----------------------------
+
+        bullish = (
+            momentum * 0.35 +
+            liquidity * 0.25 +
+            fundamentals * 0.25
+        )
+
+        bearish = (
+            (1 - momentum) * 0.30 +
+            stress * 0.40 +
+            policy * 0.30
+        )
+
+        # -----------------------------
+        # VELOCITY BOOST
+        # -----------------------------
+
+        v = _safe_dict(velocity.get(entity))
+        v_score = _safe_float(v.get("velocity_score"))
+
+        if v_score > 0.3:
+            bullish += v_score * 0.3
+
+        # -----------------------------
+        # ALLOCATOR INTEGRATION (CRITICAL)
+        # -----------------------------
+
+        alloc_signals = allocator.get(entity, [])
+
+        for a in alloc_signals:
+            st = str(a.get("signal_type"))
+
+            if st == "solana_trade_decision":
+                bullish += 0.25
+            elif st == "solana_trade_candidate":
+                bullish += 0.10
+            elif st == "solana_trade_avoid":
+                bearish += 0.25
+
+        bullish = _clamp(bullish)
+        bearish = _clamp(bearish)
+
+        direction = _direction(bullish, bearish)
+        confidence = _confidence(bullish, bearish)
+
+        # -----------------------------
+        # FINAL FILTER (CRITICAL)
+        # -----------------------------
+
+        if confidence < 0.5:
+            continue
+
+        if direction == "neutral":
+            continue
+
+        rows.append({
+            "entity": entity,
+            "direction": direction,
+            "confidence": round(confidence, 2),
+            "bullish_score": round(bullish, 2),
+            "bearish_score": round(bearish, 2),
+            "velocity_score": v_score,
+            "signal_count": len(signals.get(entity, [])),
+        })
+
+    # -----------------------------
+    # SORT
+    # -----------------------------
+
+    rows.sort(
+        key=lambda x: (
+            x["confidence"],
+            x["velocity_score"],
+            x["signal_count"]
+        ),
+        reverse=True
+    )
+
+    # -----------------------------
+    # SUMMARY
+    # -----------------------------
+
+    summary = {
+        "entity_count": len(rows),
+        "top_entity": rows[0]["entity"] if rows else None,
+        "top_direction": rows[0]["direction"] if rows else None,
+        "top_confidence": rows[0]["confidence"] if rows else 0,
+    }
+
+    return {
+        "rows": rows,
+        "summary": summary,
+        "alerts": [],
+        "endpoints": {
+            "trade_signals": "/api/toknclaw/trade-signals"
+        }
+    }

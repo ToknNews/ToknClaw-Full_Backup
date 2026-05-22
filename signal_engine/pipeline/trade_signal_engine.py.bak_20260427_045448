@@ -1,0 +1,898 @@
+#!/usr/bin/env python3
+"""
+# ============================================================
+# 🦞 TOKNCLAW — MARKET INTELLIGENCE ENGINE
+# ============================================================
+#
+# ████████╗ ██████╗ ██╗  ██╗███╗   ██╗ ██████╗██╗      █████╗ ██╗    ██╗
+# ╚══██╔══╝██╔═══██╗██║ ██╔╝████╗  ██║██╔════╝██║     ██╔══██╗██║    ██║
+#    ██║   ██║   ██║█████╔╝ ██╔██╗ ██║██║     ██║     ███████║██║ █╗ ██║
+#    ██║   ██║   ██║██╔═██╗ ██║╚██╗██║██║     ██║     ██╔══██║██║███╗██║
+#    ██║   ╚██████╔╝██║  ██╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
+#    ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+#
+# SYSTEM: ToknClaw Intelligence Layer
+# MODULE: trade_signal_engine
+# PURPOSE: Aggregate existing ToknClaw market signals into strategy-aware,
+#          trade-ready decision rows with conflict handling, movement
+#          detection, priority ranking, and OpenClaw-friendly explainability.
+#
+# AUTHOR: TOKN SYSTEM
+# ============================================================
+"""
+
+from __future__ import annotations
+
+# ---------------------------------------------------
+# BOOTSTRAP
+# ---------------------------------------------------
+
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# ---------------------------------------------------
+# IMPORTS
+# ---------------------------------------------------
+
+import re
+from collections import Counter
+from datetime import UTC, datetime
+from typing import Any, Dict, List, Tuple
+
+from signal_engine.runtime_config import load_config
+from signal_engine.pipeline.price_oi_trend_engine import build_price_oi_trend
+
+# ---------------------------------------------------
+# CONFIG
+# ---------------------------------------------------
+
+CONFIG_FILE = "trade_signal_config.json"
+WEIGHTS_FILE = "trade_signal_weights.json"
+
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "signal_amplifier": 5.0,
+    "fallback_bias": 0.05,
+    "conflict_hard_no_trade": 0.60,
+    "conflict_heavy_penalty": 0.60,
+    "conflict_light_penalty": 0.40,
+    "conflict_heavy_multiplier": 0.78,
+    "conflict_light_multiplier": 0.90,
+    "min_actionable_score": 0.08,
+    "min_neutral_diff": 0.06,
+    "strong_score_threshold": 0.35,
+    "strong_diff_threshold": 0.14,
+    "weak_direction_score_threshold": 0.16,
+    "direction_dominance_ratio": 1.20,
+    "priority_strong_multiplier": 1.20,
+    "priority_directional_multiplier": 1.05,
+    "priority_no_trade_multiplier": 0.40,
+    "priority_neutral_multiplier": 0.70,
+    "max_output_rows": 50,
+    "max_reasons": 10,
+    "inject_trend_signals": True,
+    "trend_signal_dedup": True,
+    "trend_signal_allow_replace": False,
+}
+
+def _load_engine_config() -> Dict[str, Any]:
+    cfg = load_config(CONFIG_FILE)
+    if not isinstance(cfg, dict):
+        return dict(DEFAULT_CONFIG)
+
+    merged = dict(DEFAULT_CONFIG)
+    merged.update(cfg)
+    return merged
+
+ENGINE_CONFIG = _load_engine_config()
+
+# ---------------------------------------------------
+# HELPERS
+# ---------------------------------------------------
+
+def _safe_list(x: Any) -> List[Any]:
+    return x if isinstance(x, list) else []
+
+def _safe_dict(x: Any) -> Dict[str, Any]:
+    return x if isinstance(x, dict) else {}
+
+def _safe_str(x: Any) -> str:
+    return str(x or "").strip()
+
+def _safe_float(x: Any, d: float = 0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return d
+
+def _safe_int_like(x: Any, default: int = 0) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+def _safe_bool(x: Any, default: bool = False) -> bool:
+    if isinstance(x, bool):
+        return x
+    if isinstance(x, str):
+        return x.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(x, (int, float)):
+        return bool(x)
+    return default
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+def _clamp(x: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, x))
+
+def _cfg_float(key: str, default: float) -> float:
+    return _safe_float(ENGINE_CONFIG.get(key), default)
+
+def _cfg_int(key: str, default: int) -> int:
+    return _safe_int_like(ENGINE_CONFIG.get(key), default)
+
+def _cfg_bool(key: str, default: bool) -> bool:
+    return _safe_bool(ENGINE_CONFIG.get(key), default)
+
+def _scaled(score: float) -> float:
+    amplifier = _cfg_float("signal_amplifier", 5.0)
+    return round(score * amplifier, 6)
+
+def _parse_summary_float(summary: Any, key: str, default: float = 0.0) -> float:
+    text = _safe_str(summary)
+    if not text:
+        return default
+
+    pattern = rf"{re.escape(key)}=([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
+    match = re.search(pattern, text)
+
+    if not match:
+        return default
+
+    return _safe_float(match.group(1), default)
+
+def _rows_of_type(rows: List[Dict[str, Any]], signal_type: str) -> List[Dict[str, Any]]:
+    return [r for r in rows if _safe_str(r.get("signal_type")) == signal_type]
+
+def _unique_reasons(reasons: List[str], limit: int = 10) -> List[str]:
+    seen = set()
+    out: List[str] = []
+
+    for reason in reasons:
+        text = _safe_str(reason)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= limit:
+            break
+
+    return out
+
+def _inject_trend_signals(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    if not _cfg_bool("inject_trend_signals", True):
+        return snapshot
+
+    signals = snapshot.get("signals")
+    if not isinstance(signals, list):
+        snapshot["signals"] = []
+        signals = snapshot["signals"]
+
+    trend_signals = build_price_oi_trend(snapshot)
+    if not isinstance(trend_signals, list) or not trend_signals:
+        return snapshot
+
+    if not _cfg_bool("trend_signal_dedup", True):
+        signals.extend(trend_signals)
+        return snapshot
+
+    existing_keys = set()
+    for row in signals:
+        row = _safe_dict(row)
+        existing_keys.add((
+            _safe_str(row.get("signal_type")),
+            _safe_str(row.get("entity")).upper(),
+        ))
+
+    for row in trend_signals:
+        row = _safe_dict(row)
+        key = (
+            _safe_str(row.get("signal_type")),
+            _safe_str(row.get("entity")).upper(),
+        )
+
+        if key in existing_keys and not _cfg_bool("trend_signal_allow_replace", False):
+            continue
+
+        signals.append(row)
+        existing_keys.add(key)
+
+    return snapshot
+
+# ---------------------------------------------------
+# SIGNAL INDEX
+# ---------------------------------------------------
+
+def _signals_by_entity(snapshot: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+
+    for s in _safe_list(snapshot.get("signals")):
+        s = _safe_dict(s)
+
+        raw_entity = _safe_str(s.get("entity"))
+        entity = raw_entity.upper()
+
+        if not entity:
+            continue
+
+        bucket = out.setdefault(entity, {
+            "entity": raw_entity or entity,
+            "rows": [],
+            "types": Counter(),
+        })
+
+        signal_type = _safe_str(s.get("signal_type"))
+        if signal_type:
+            bucket["types"][signal_type] += 1
+
+        bucket["rows"].append(s)
+
+    return out
+
+# ---------------------------------------------------
+# DISCRETE RULES
+# ---------------------------------------------------
+
+DISCRETE_SIGNAL_RULES: Dict[str, Dict[str, Any]] = {
+    "solana_strategy_entry_dip_buy": {"bias": "bullish", "score": 0.25, "reason": "dip_entry"},
+    "solana_strategy_watch_dip_buy": {"bias": "bullish", "score": 0.10, "reason": "dip_watch"},
+    "solana_strategy_avoid_dip_buy": {"bias": "bearish", "score": 0.30, "reason": "dip_avoid"},
+    "perp_strategy_crowded_longs": {"bias": "bearish", "score": 0.30, "reason": "crowded_longs"},
+    "perp_strategy_crowded_shorts": {"bias": "bullish", "score": 0.30, "reason": "crowded_shorts"},
+    "perp_strategy_short_squeeze_watch": {"bias": "bullish", "score": 0.42, "reason": "short_squeeze_watch"},
+    "perp_strategy_long_liquidation_watch": {"bias": "bearish", "score": 0.42, "reason": "long_liq_watch"},
+    "perp_open_interest_build_accelerating": {"bias": "bullish", "score": 0.20, "reason": "oi_build_accel"},
+    "perp_open_interest_unwind_accelerating": {"bias": "bearish", "score": 0.20, "reason": "oi_unwind_accel"},
+    "perp_open_interest_build_decelerating": {"bias": "bearish", "score": 0.10, "reason": "oi_build_decel"},
+    "perp_liquidation_risk_long_flush": {"bias": "bearish", "score": 0.35, "reason": "long_flush"},
+    "perp_liquidation_risk_short_flush": {"bias": "bullish", "score": 0.35, "reason": "short_flush"},
+    "perp_squeeze_confirmation_bullish": {"bias": "bullish", "score": 0.48, "reason": "bullish_confirm"},
+    "perp_squeeze_confirmation_bearish": {"bias": "bearish", "score": 0.48, "reason": "bearish_confirm"},
+    "perp_trend_bullish": {"bias": "bullish", "score": 0.40, "reason": "trend_bull"},
+    "perp_trend_bearish": {"bias": "bearish", "score": 0.40, "reason": "trend_bear"},
+    "perp_trend_short_unwind": {"bias": "bullish", "score": 0.25, "reason": "short_unwind"},
+    "perp_trend_long_unwind": {"bias": "bearish", "score": 0.25, "reason": "long_unwind"},
+}
+
+def _apply_discrete_rules(types: Counter) -> Tuple[float, float, List[str]]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    for signal_type, rule in DISCRETE_SIGNAL_RULES.items():
+        count = int(types.get(signal_type, 0))
+        if count <= 0:
+            continue
+
+        score = _safe_float(rule.get("score"), 0.0) * count
+        bias = _safe_str(rule.get("bias"))
+        reason = _safe_str(rule.get("reason"))
+
+        if bias == "bullish":
+            bullish += score
+        elif bias == "bearish":
+            bearish += score
+
+        if reason:
+            reasons.append(reason)
+
+    return _scaled(bullish), _scaled(bearish), reasons
+
+# ---------------------------------------------------
+# STRATEGY FAMILIES
+# ---------------------------------------------------
+
+def _strategy_crowding_fade(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    if int(types.get("perp_strategy_crowded_longs", 0)) > 0:
+        bearish += 0.18
+        reasons.append("crowding_fade_longs")
+
+    if int(types.get("perp_strategy_crowded_shorts", 0)) > 0:
+        bullish += 0.18
+        reasons.append("crowding_fade_shorts")
+
+    if int(types.get("perp_liquidation_risk_long_flush", 0)) > 0:
+        bearish += 0.12
+        reasons.append("crowding_liq_long")
+
+    if int(types.get("perp_liquidation_risk_short_flush", 0)) > 0:
+        bullish += 0.12
+        reasons.append("crowding_liq_short")
+
+    return {
+        "name": "crowding_fade",
+        "bullish": _scaled(bullish),
+        "bearish": _scaled(bearish),
+        "reasons": reasons,
+    }
+
+def _strategy_trend_continuation(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    if int(types.get("perp_trend_bullish", 0)) > 0:
+        bullish += 0.28
+        reasons.append("continuation_bull")
+
+    if int(types.get("perp_trend_bearish", 0)) > 0:
+        bearish += 0.28
+        reasons.append("continuation_bear")
+
+    if int(types.get("perp_trend_short_unwind", 0)) > 0:
+        bullish += 0.10
+        reasons.append("continuation_short_unwind")
+
+    if int(types.get("perp_trend_long_unwind", 0)) > 0:
+        bearish += 0.10
+        reasons.append("continuation_long_unwind")
+
+    return {
+        "name": "trend_continuation",
+        "bullish": _scaled(bullish),
+        "bearish": _scaled(bearish),
+        "reasons": reasons,
+    }
+
+def _strategy_funding_baseline(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    funding_rows = _rows_of_type(rows, "perp_funding_rate")
+    if not funding_rows:
+        return {"name": "funding_baseline", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    values: List[float] = []
+    for row in funding_rows:
+        avg = _parse_summary_float(row.get("summary"), "avg", 0.0)
+        if avg != 0.0:
+            values.append(avg)
+
+    if not values:
+        return {"name": "funding_baseline", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    avg_funding = sum(values) / len(values)
+    abs_funding = abs(avg_funding)
+
+    floor = 0.00003
+    ceiling = 0.00030
+    cap_score = 0.18
+
+    if abs_funding >= floor:
+        normalized = min(max((abs_funding - floor) / (ceiling - floor), 0.0), 1.0)
+        score = round(normalized * cap_score, 6)
+
+        if avg_funding < 0:
+            bullish += score
+            reasons.append("funding_negative")
+        elif avg_funding > 0:
+            bearish += score
+            reasons.append("funding_positive")
+
+    if int(types.get("perp_funding_divergence", 0)) > 0:
+        if avg_funding < 0:
+            bullish += 0.04
+            reasons.append("funding_divergence")
+        elif avg_funding > 0:
+            bearish += 0.04
+            reasons.append("funding_divergence")
+
+    return {
+        "name": "funding_baseline",
+        "bullish": _scaled(bullish),
+        "bearish": _scaled(bearish),
+        "reasons": reasons,
+    }
+
+def _strategy_oi_acceleration(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    accel_rows = _rows_of_type(rows, "perp_open_interest_acceleration")
+    if not accel_rows:
+        return {"name": "oi_acceleration", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    best_row = None
+    best_score = 0.0
+
+    for row in accel_rows:
+        current_change_pct = _parse_summary_float(row.get("summary"), "current_change_pct", 0.0)
+        acceleration_pct = _parse_summary_float(row.get("summary"), "acceleration_pct", 0.0)
+        strength = abs(current_change_pct) + abs(acceleration_pct)
+
+        if strength > best_score:
+            best_score = strength
+            best_row = row
+
+    if not best_row:
+        return {"name": "oi_acceleration", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    current_change_pct = _parse_summary_float(best_row.get("summary"), "current_change_pct", 0.0)
+    acceleration_pct = _parse_summary_float(best_row.get("summary"), "acceleration_pct", 0.0)
+
+    if current_change_pct >= 0.75 and acceleration_pct >= 0.50:
+        bullish += min(0.18, 0.08 + (abs(acceleration_pct) / 10.0))
+        reasons.append("oi_accel_base")
+    elif current_change_pct <= -0.75 and acceleration_pct <= -0.50:
+        bearish += min(0.18, 0.08 + (abs(acceleration_pct) / 10.0))
+        reasons.append("oi_unwind_base")
+    elif current_change_pct > 0 and acceleration_pct <= -0.75:
+        bearish += 0.08
+        reasons.append("oi_build_fading")
+
+    return {
+        "name": "oi_acceleration",
+        "bullish": _scaled(bullish),
+        "bearish": _scaled(bearish),
+        "reasons": reasons,
+    }
+
+def _strategy_micro_trend(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    oi_change_rows = _rows_of_type(rows, "perp_open_interest_change")
+    if not oi_change_rows:
+        return {"name": "micro_trend", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    positive_moves = 0
+    negative_moves = 0
+
+    for row in oi_change_rows:
+        oi_change_pct = _parse_summary_float(row.get("summary"), "oi_change_pct", 0.0)
+
+        if oi_change_pct >= 0.75:
+            positive_moves += 1
+        elif oi_change_pct <= -0.75:
+            negative_moves += 1
+
+    if positive_moves > 0:
+        bullish += min(0.14, 0.06 + (positive_moves * 0.02))
+        reasons.append("oi_build_micro")
+
+    if negative_moves > 0:
+        bearish += min(0.14, 0.06 + (negative_moves * 0.02))
+        reasons.append("oi_unwind_micro")
+
+    return {
+        "name": "micro_trend",
+        "bullish": _scaled(bullish),
+        "bearish": _scaled(bearish),
+        "reasons": reasons,
+    }
+
+def _strategy_breakout_continuation(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    if int(types.get("perp_trend_bullish", 0)) > 0 and int(types.get("perp_open_interest_build_accelerating", 0)) > 0:
+        bullish += 0.20
+        reasons.append("breakout_bull")
+
+    if int(types.get("perp_trend_bearish", 0)) > 0 and int(types.get("perp_open_interest_unwind_accelerating", 0)) > 0:
+        bearish += 0.20
+        reasons.append("breakdown_bear")
+
+    if int(types.get("perp_strategy_short_squeeze_watch", 0)) > 0 and int(types.get("perp_open_interest_build_accelerating", 0)) > 0:
+        bullish += 0.12
+        reasons.append("breakout_watch_bull")
+
+    if int(types.get("perp_strategy_long_liquidation_watch", 0)) > 0 and int(types.get("perp_open_interest_unwind_accelerating", 0)) > 0:
+        bearish += 0.12
+        reasons.append("breakdown_watch_bear")
+
+    return {
+        "name": "breakout_continuation",
+        "bullish": _scaled(bullish),
+        "bearish": _scaled(bearish),
+        "reasons": reasons,
+    }
+
+def _apply_conviction_modifiers(
+    rows: List[Dict[str, Any]],
+    types: Counter,
+    bullish: float,
+    bearish: float,
+    reasons: List[str],
+) -> Tuple[float, float, List[str]]:
+    if bullish <= 0 and bearish <= 0:
+        return bullish, bearish, reasons
+
+    has_high_oi = len(_rows_of_type(rows, "perp_open_interest_high")) > 0
+    has_oi_divergence = len(_rows_of_type(rows, "perp_open_interest_divergence")) > 0
+
+    if has_high_oi:
+        if bullish > bearish:
+            bullish += _scaled(0.03)
+            reasons.append("high_oi")
+        elif bearish > bullish:
+            bearish += _scaled(0.03)
+            reasons.append("high_oi")
+
+    if has_oi_divergence:
+        if bullish > bearish:
+            bullish += _scaled(0.02)
+            reasons.append("oi_divergence")
+        elif bearish > bullish:
+            bearish += _scaled(0.02)
+            reasons.append("oi_divergence")
+
+    return bullish, bearish, reasons
+
+# ---------------------------------------------------
+# DECISION LAYER
+# ---------------------------------------------------
+
+def _calculate_conflict_score(bullish: float, bearish: float) -> float:
+    total = bullish + bearish
+    if total <= 0:
+        return 0.0
+
+    weaker = min(bullish, bearish)
+    return round(_clamp(weaker / total), 6)
+
+def _apply_conflict_penalty(bullish: float, bearish: float) -> Tuple[float, float, float]:
+    conflict_score = _calculate_conflict_score(bullish, bearish)
+
+    heavy_threshold = _cfg_float("conflict_heavy_penalty", 0.60)
+    light_threshold = _cfg_float("conflict_light_penalty", 0.40)
+    heavy_multiplier = _cfg_float("conflict_heavy_multiplier", 0.78)
+    light_multiplier = _cfg_float("conflict_light_multiplier", 0.90)
+
+    if conflict_score >= heavy_threshold:
+        bullish *= heavy_multiplier
+        bearish *= heavy_multiplier
+    elif conflict_score >= light_threshold:
+        bullish *= light_multiplier
+        bearish *= light_multiplier
+
+    return round(bullish, 6), round(bearish, 6), conflict_score
+
+def _resolve_direction(bullish: float, bearish: float, conflict_score: float) -> str:
+    diff = bullish - bearish
+    abs_diff = abs(diff)
+
+    if max(bullish, bearish) < _cfg_float("min_actionable_score", 0.08):
+        return "no_trade"
+
+    if conflict_score >= _cfg_float("conflict_hard_no_trade", 0.60):
+        return "no_trade"
+
+    if abs_diff < _cfg_float("min_neutral_diff", 0.06):
+        return "neutral"
+
+    strong_score_threshold = _cfg_float("strong_score_threshold", 0.35)
+    strong_diff_threshold = _cfg_float("strong_diff_threshold", 0.14)
+    weak_direction_score_threshold = _cfg_float("weak_direction_score_threshold", 0.16)
+    direction_dominance_ratio = _cfg_float("direction_dominance_ratio", 1.20)
+
+    if diff > 0:
+        if bullish >= strong_score_threshold and abs_diff >= strong_diff_threshold:
+            return "strong_bullish"
+        if bullish >= weak_direction_score_threshold and bullish > bearish * direction_dominance_ratio:
+            return "bullish"
+
+    if diff < 0:
+        if bearish >= strong_score_threshold and abs_diff >= strong_diff_threshold:
+            return "strong_bearish"
+        if bearish >= weak_direction_score_threshold and bearish > bullish * direction_dominance_ratio:
+            return "bearish"
+
+    return "neutral"
+
+def _confidence_from_scores(bullish: float, bearish: float, conflict_score: float) -> float:
+    total = bullish + bearish
+    if total <= 0:
+        return 0.0
+
+    dominance = abs(bullish - bearish) / total  # 0 → 1
+    penalty = 1.0 - min(conflict_score, 0.50)
+
+    confidence = dominance * penalty
+
+    # soft cap (prevents saturation)
+    return round(min(confidence, 0.85), 6)
+
+def _priority_score(confidence: float, signal_count: int, direction: str) -> float:
+    direction_multiplier = 1.0
+
+    if direction in {"strong_bullish", "strong_bearish"}:
+        direction_multiplier = _cfg_float("priority_strong_multiplier", 1.20)
+    elif direction in {"bullish", "bearish"}:
+        direction_multiplier = _cfg_float("priority_directional_multiplier", 1.05)
+    elif direction == "no_trade":
+        direction_multiplier = _cfg_float("priority_no_trade_multiplier", 0.40)
+    elif direction == "neutral":
+        direction_multiplier = _cfg_float("priority_neutral_multiplier", 0.70)
+
+    score = confidence * (1.0 + min(signal_count, 20) / 12.0) * direction_multiplier
+    return round(_clamp(score), 6)
+
+def _dominant_setup_family(family_scores: Dict[str, Dict[str, float]]) -> str:
+    best_name = "none"
+    best_score = 0.0
+
+    for name, payload in family_scores.items():
+        value = max(_safe_float(payload.get("bullish"), 0.0), _safe_float(payload.get("bearish"), 0.0))
+        if value > best_score:
+            best_name = name
+            best_score = value
+
+    return best_name
+
+def _entry_style_from_direction(direction: str, dominant_family: str) -> str:
+    if direction == "no_trade":
+        return "stand_aside"
+
+    if dominant_family in {"crowding_fade"}:
+        return "fade"
+
+    if dominant_family in {"trend_continuation", "breakout_continuation"}:
+        return "momentum"
+
+    if dominant_family in {"micro_trend", "oi_acceleration"}:
+        return "probe"
+
+    return "balanced"
+
+def _agent_notes(
+    direction: str,
+    dominant_family: str,
+    conflict_score: float,
+    priority_score: float,
+) -> List[str]:
+    notes: List[str] = []
+
+    if direction == "no_trade":
+        notes.append("Signal conflict or insufficient edge. Stand aside.")
+    elif dominant_family == "crowding_fade":
+        notes.append("Contrarian crowding setup. Watch reversal quality.")
+    elif dominant_family == "trend_continuation":
+        notes.append("Continuation setup. Favor follow-through confirmation.")
+    elif dominant_family == "breakout_continuation":
+        notes.append("Breakout-style setup. Monitor momentum persistence.")
+
+    if conflict_score >= _cfg_float("conflict_light_penalty", 0.40):
+        notes.append("Mixed evidence present. Use smaller sizing or wait for confirmation.")
+
+    if priority_score >= 0.70:
+        notes.append("High-priority candidate for ranking / rotation.")
+
+    return notes[:3]
+
+# ---------------------------------------------------
+# CORE ENGINE
+# ---------------------------------------------------
+
+def build_trade_signals(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+
+    # ---------------------------------------------------
+    # TREND INJECTION (CRITICAL)
+    # ---------------------------------------------------
+
+    snapshot = _inject_trend_signals(snapshot)
+
+    signals_map = _signals_by_entity(snapshot)
+    rows: List[Dict[str, Any]] = []
+    weights = load_config(WEIGHTS_FILE)
+    if not isinstance(weights, dict):
+        weights = {}
+
+    for _, data in signals_map.items():
+        entity = data["entity"]
+        types = data["types"]
+        signal_rows = data["rows"]
+
+        bullish = 0.0
+        bearish = 0.0
+        reasons: List[str] = []
+        family_scores: Dict[str, Dict[str, float]] = {}
+
+        # ---------------------------------------------------
+        # 1. DISCRETE SIGNAL LAYER
+        # ---------------------------------------------------
+
+        d_bullish, d_bearish, d_reasons = _apply_discrete_rules(types)
+        bullish += d_bullish
+        bearish += d_bearish
+        reasons.extend(d_reasons)
+
+        family_scores["discrete_rules"] = {
+            "bullish": round(d_bullish, 6),
+            "bearish": round(d_bearish, 6),
+        }
+
+        # ---------------------------------------------------
+        # 2. STRATEGY FAMILIES
+        # ---------------------------------------------------
+
+        families = [
+            _strategy_crowding_fade(signal_rows, types),
+            _strategy_trend_continuation(signal_rows, types),
+            _strategy_funding_baseline(signal_rows, types),
+            _strategy_oi_acceleration(signal_rows, types),
+            _strategy_micro_trend(signal_rows, types),
+            _strategy_breakout_continuation(signal_rows, types),
+        ]
+
+        for family in families:
+            family_name = _safe_str(family.get("name")) or "unknown"
+            family_bullish = _safe_float(family.get("bullish"), 0.0)
+            family_bearish = _safe_float(family.get("bearish"), 0.0)
+            family_reasons = _safe_list(family.get("reasons"))
+
+            weight = _safe_float(weights.get(family_name, 1.0), 1.0)
+
+            weighted_bullish = family_bullish * weight
+            weighted_bearish = family_bearish * weight
+
+            bullish += weighted_bullish
+            bearish += weighted_bearish
+
+            reasons.extend([_safe_str(x) for x in family_reasons])
+
+            family_scores[family_name] = {
+                "bullish": round(weighted_bullish, 6),
+                "bearish": round(weighted_bearish, 6),
+            }
+
+        # ---------------------------------------------------
+        # 3. CONVICTION MODIFIERS
+        # ---------------------------------------------------
+
+        bullish, bearish, reasons = _apply_conviction_modifiers(
+            rows=signal_rows,
+            types=types,
+            bullish=bullish,
+            bearish=bearish,
+            reasons=reasons,
+        )
+
+        # ---------------------------------------------------
+        # 4. FALLBACK SIGNAL (CONFIG-DRIVEN)
+        # ---------------------------------------------------
+
+        if bullish == 0.0 and bearish == 0.0:
+            fallback_bias = _cfg_float("fallback_bias", 0.05)
+            if fallback_bias > 0:
+                bearish += fallback_bias
+                reasons.append("fallback_bias")
+
+        # ---------------------------------------------------
+        # 5. CONFLICT HANDLING
+        # ---------------------------------------------------
+
+        bullish, bearish, conflict_score = _apply_conflict_penalty(bullish, bearish)
+
+        # ---------------------------------------------------
+        # 6. DECISION LAYER
+        # ---------------------------------------------------
+
+        direction = _resolve_direction(bullish, bearish, conflict_score)
+        confidence = _confidence_from_scores(bullish, bearish, conflict_score)
+        dominant_family = _dominant_setup_family(family_scores)
+        entry_style = _entry_style_from_direction(direction, dominant_family)
+        signal_count = sum(types.values())
+        priority_score = _priority_score(confidence, signal_count, direction)
+
+        # ---------------------------------------------------
+        # 7. EXPLAINABILITY / OPENCLAW
+        # ---------------------------------------------------
+
+        perp_setups = [
+            _safe_str(r.get("summary"))
+            for r in signal_rows
+            if _safe_str(r.get("signal_type")) == "perp_broadcast_setup"
+        ][:3]
+
+        rows.append({
+            "entity": entity,
+            "direction": direction,
+            "confidence": round(confidence, 6),
+            "priority_score": priority_score,
+            "entry_style": entry_style,
+            "setup_family": dominant_family,
+            "conflict_score": round(conflict_score, 6),
+            "no_trade": direction == "no_trade",
+            "reasons": _unique_reasons(reasons, limit=_cfg_int("max_reasons", 10)),
+            "perp_setups": perp_setups,
+            "signal_count": signal_count,
+            "score_breakdown": {
+                "bullish": round(bullish, 6),
+                "bearish": round(bearish, 6),
+                "net": round(bullish - bearish, 6),
+            },
+            "family_breakdown": family_scores,
+            "strategy_modules": [
+                "discrete_rules",
+                "crowding_fade",
+                "trend_continuation",
+                "funding_baseline",
+                "oi_acceleration",
+                "micro_trend",
+                "breakout_continuation",
+                "conviction_modifiers",
+                "conflict_penalty",
+            ],
+            "agent_notes": _agent_notes(
+                direction=direction,
+                dominant_family=dominant_family,
+                conflict_score=conflict_score,
+                priority_score=priority_score,
+            ),
+            "generated_at": _now().isoformat(),
+        })
+
+    rows.sort(
+        key=lambda x: (
+            _safe_float(x.get("priority_score"), 0.0),
+            _safe_float(x.get("confidence"), 0.0),
+            _safe_int_like(x.get("signal_count"), 0),
+            _safe_str(x.get("entity")),
+        ),
+        reverse=True,
+    )
+
+    summary = {
+        "entity_count": len(rows),
+        "strong_bullish_count": sum(1 for r in rows if r["direction"] == "strong_bullish"),
+        "bullish_count": sum(1 for r in rows if r["direction"] == "bullish"),
+        "neutral_count": sum(1 for r in rows if r["direction"] == "neutral"),
+        "no_trade_count": sum(1 for r in rows if r["direction"] == "no_trade"),
+        "bearish_count": sum(1 for r in rows if r["direction"] == "bearish"),
+        "strong_bearish_count": sum(1 for r in rows if r["direction"] == "strong_bearish"),
+        "top_setup_families": Counter([_safe_str(r.get("setup_family")) for r in rows]).most_common(5),
+    }
+
+    return {
+        "rows": rows[:_cfg_int("max_output_rows", 50)],
+        "summary": summary,
+    }
+
+# ---------------------------------------------------
+# ENTRYPOINT
+# ---------------------------------------------------
+
+if __name__ == "__main__":
+    import json
+
+    with open("/opt/toknclaw/data/snapshots/latest_snapshot_trading.json", "r", encoding="utf-8") as f:
+        snapshot = json.load(f)
+
+    out = build_trade_signals(snapshot)
+
+    print("\n=== TRADE SIGNALS ===")
+    for r in out["rows"][:15]:
+        print(
+            r["entity"],
+            r["direction"],
+            r["confidence"],
+            r["priority_score"],
+            r["setup_family"],
+            r["reasons"],
+            r["score_breakdown"],
+        )

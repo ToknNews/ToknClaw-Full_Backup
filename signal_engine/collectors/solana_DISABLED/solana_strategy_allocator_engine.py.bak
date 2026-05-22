@@ -1,0 +1,906 @@
+#!/usr/bin/env python3
+"""
+# ============================================================
+# 🦞 TOKNCLAW — MARKET INTELLIGENCE ENGINE
+# ============================================================
+#
+# ████████╗ ██████╗ ██╗  ██╗███╗   ██╗ ██████╗██╗      █████╗ ██╗    ██╗
+# ╚══██╔══╝██╔═══██╗██║ ██╔╝████╗  ██║██╔════╝██║     ██╔══██╗██║    ██║
+#    ██║   ██║   ██║█████╔╝ ██╔██╗ ██║██║     ██║     ███████║██║ █╗ ██║
+#    ██║   ██║   ██║██╔═██╗ ██║╚██╗██║██║     ██║     ██╔══██║██║███╗██║
+#    ██║   ╚██████╔╝██║  ██╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
+#    ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+#
+# SYSTEM: ToknClaw Intelligence Layer
+# MODULE: solana_strategy_allocator_engine
+# PURPOSE: <describe purpose>
+#
+# AUTHOR: TOKN SYSTEM
+# ============================================================
+
+TOKNCLAW SIGNAL ENGINE
+Solana Strategy Allocator Engine
+
+Purpose
+-------
+Aggregates multiple Solana strategy engines into a unified trade
+decision layer.
+
+This module converts:
+• dip strategy signals
+• momentum strategy signals
+• migration strategy signals
+• alpha confirmations
+• narrative confirmations
+• liquidity warnings
+
+Into:
+• ranked trade decisions
+• candidate trade queue
+• avoid decisions
+• allocator summary output
+
+Responsibilities
+----------------
+• read local signal lake only
+• discover active strategy signals
+• score candidate tokens across multiple strategy families
+• support conflict resolution
+• support future strategy expansion through config
+• emit allocator outputs for paper trading and future live execution
+• remain additive to the ToknClaw architecture
+• remain OpenClaw agent ready
+
+Design Notes
+------------
+• no direct RPC calls
+• strategy families are registry/config driven
+• future strategy classes can be added without rewriting allocator core
+• allocator emits decisions, not actual orders
+
+Primary Input
+-------------
+/opt/toknclaw/data/signal_lake.json
+
+Primary Output
+--------------
+Signals returned into snapshot pipeline
+
+Agent Readiness
+---------------
+OpenClaw agents should tune:
+• /opt/toknclaw/config/solana_strategy_allocator_engine.json
+
+Author: TOKN Systems
+"""
+
+from __future__ import annotations
+
+import sys
+import time
+from collections import Counter, defaultdict
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from signal_engine.collectors.registry import register_collector
+
+# ---------------------------------------------------
+# PROJECT ROOT BOOTSTRAP
+# ---------------------------------------------------
+
+PROJECT_ROOT = Path("/opt/toknclaw/signal_engine")
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# ---------------------------------------------------
+# IMPORTS
+# ---------------------------------------------------
+
+from models.signal import Signal
+from runtime_config import load_config
+from signal_lake import load_signal_lake
+
+
+# ---------------------------------------------------
+# CONFIG
+# ---------------------------------------------------
+
+CONFIG_FILE = "solana_strategy_allocator_engine.json"
+
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "enabled": True,
+    "debug": True,
+    "lookback_hours": 12,
+    "max_tokens_scored": 200,
+    "max_trade_decisions": 8,
+    "max_trade_candidates": 16,
+    "max_trade_avoids": 12,
+    "decision_score_threshold": 11.0,
+    "candidate_score_threshold": 6.0,
+    "avoid_score_threshold": -2.5,
+    "max_decisions_per_strategy_family": 3,
+    "excluded_entities": [
+        "SOLANA",
+        "SOLANA_ALPHA",
+        "SOLANA_CULTURE",
+        "SOLANA_DIP_STRATEGY",
+        "SOLANA_MOMENTUM_STRATEGY",
+        "SOLANA_MIGRATION_STRATEGY",
+        "PUMPFUN",
+        "PUMPFUN_ACTIVITY",
+        "SOLANA_MINT_ACTIVITY",
+        "RAYDIUM_POOL_ACTIVITY",
+        "JUPITER_SWAP_ACTIVITY",
+        "SOLANA_VELOCITY",
+    ],
+    "excluded_entity_prefixes": [
+        "SOLANA_",
+        "THEME_",
+        "PUMPFUN_",
+        "RAYDIUM_",
+        "JUPITER_",
+    ],
+    "strategy_registry": {
+        "solana_strategy_entry_dip_buy": {
+            "family": "dip",
+            "base_weight": 3.2,
+            "decision_bonus": 2.0,
+            "candidate_bonus": 1.2,
+        },
+        "solana_strategy_watch_dip_buy": {
+            "family": "dip",
+            "base_weight": 1.2,
+            "decision_bonus": 0.6,
+            "candidate_bonus": 1.0,
+        },
+        "solana_strategy_avoid_dip_buy": {
+            "family": "dip",
+            "base_weight": -2.4,
+            "decision_bonus": 0.0,
+            "candidate_bonus": -1.2,
+        },
+        "solana_strategy_entry_momentum": {
+            "family": "momentum",
+            "base_weight": 3.4,
+            "decision_bonus": 2.4,
+            "candidate_bonus": 1.3,
+        },
+        "solana_strategy_watch_momentum": {
+            "family": "momentum",
+            "base_weight": 1.5,
+            "decision_bonus": 0.8,
+            "candidate_bonus": 1.0,
+        },
+        "solana_strategy_avoid_momentum": {
+            "family": "momentum",
+            "base_weight": -2.6,
+            "decision_bonus": 0.0,
+            "candidate_bonus": -1.3,
+        },
+        "solana_strategy_entry_migration": {
+            "family": "migration",
+            "base_weight": 3.6,
+            "decision_bonus": 2.5,
+            "candidate_bonus": 1.3,
+        },
+        "solana_strategy_watch_migration": {
+            "family": "migration",
+            "base_weight": 1.6,
+            "decision_bonus": 0.8,
+            "candidate_bonus": 1.0,
+        },
+        "solana_strategy_avoid_migration": {
+            "family": "migration",
+            "base_weight": -2.8,
+            "decision_bonus": 0.0,
+            "candidate_bonus": -1.4,
+        },
+    },
+    "supporting_signal_weights": {
+        "solana_alpha_entry_signal": 2.4,
+        "solana_memecoin_of_the_day": 2.2,
+        "solana_memecoin_trending": 1.3,
+        "solana_memecoin_narrative_candidate": 1.2,
+        "solana_bitsy_watchlist": 0.7,
+        "solana_funny_name_candidate": 0.3,
+        "solana_token_name_detected": 0.4,
+        "solana_token_symbol_detected": 0.2,
+        "solana_token_metadata_resolved": 0.4,
+        "solana_token_name_theme": 0.6,
+        "solana_pumpfun_launch": 1.3,
+        "solana_pumpfun_activity": 0.6,
+        "solana_raydium_pool_init": 1.6,
+        "solana_raydium_pool_activity": 0.8,
+        "solana_jupiter_swap": 0.7,
+        "solana_jupiter_swap_activity": 1.0,
+        "solana_volume_velocity": 1.2,
+        "solana_liquidity_depth": 0.9,
+        "solana_liquidity_event": 0.8,
+        "solana_thin_liquidity_alert": -2.8,
+    },
+}
+
+
+# ---------------------------------------------------
+# HELPERS
+# ---------------------------------------------------
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def safe_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def parse_dt(value: Any) -> Optional[datetime]:
+    text = clean_text(value)
+    if not text:
+        return None
+
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+
+        dt = datetime.fromisoformat(text)
+
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+
+        return dt.astimezone(UTC)
+    except Exception:
+        return None
+
+
+def debug_enabled(cfg: Dict[str, Any]) -> bool:
+    return bool(cfg.get("debug", True))
+
+
+def debug_log(cfg: Dict[str, Any], message: str) -> None:
+    if debug_enabled(cfg):
+        print(f"[SOLANA ALLOCATOR] {message}")
+
+
+def info_log(message: str) -> None:
+    print(f"[SOLANA ALLOCATOR] {message}")
+
+
+def load_engine_config() -> Dict[str, Any]:
+    cfg = load_config(CONFIG_FILE)
+
+    if not isinstance(cfg, dict):
+        return deepcopy(DEFAULT_CONFIG)
+
+    merged = deepcopy(DEFAULT_CONFIG)
+    merged.update(cfg)
+
+    if not isinstance(merged.get("strategy_registry"), dict):
+        merged["strategy_registry"] = deepcopy(DEFAULT_CONFIG["strategy_registry"])
+
+    if not isinstance(merged.get("supporting_signal_weights"), dict):
+        merged["supporting_signal_weights"] = deepcopy(DEFAULT_CONFIG["supporting_signal_weights"])
+
+    return merged
+
+
+def object_signals_only(rows: List[Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+
+    for row in rows:
+        if isinstance(row, dict):
+            out.append(row)
+            continue
+
+        if hasattr(row, "__dict__"):
+            try:
+                out.append(dict(row.__dict__))
+            except Exception:
+                continue
+
+    return out
+
+
+def recent_rows(rows: List[Dict[str, Any]], hours: int) -> List[Dict[str, Any]]:
+    cutoff = utc_now() - timedelta(hours=hours)
+    out: List[Dict[str, Any]] = []
+
+    for row in rows:
+        ts = parse_dt(row.get("timestamp"))
+        if ts is None:
+            continue
+
+        if ts >= cutoff:
+            out.append(row)
+
+    return out
+
+
+def is_excluded_entity(entity: str, cfg: Dict[str, Any]) -> bool:
+    entity = clean_text(entity)
+    if not entity:
+        return True
+
+    if entity in set(cfg.get("excluded_entities", [])):
+        return True
+
+    for prefix in cfg.get("excluded_entity_prefixes", []):
+        if entity.upper().startswith(clean_text(prefix).upper()):
+            return True
+
+    if "/" in entity:
+        return True
+
+    if len(entity) < 20:
+        return True
+
+    return False
+
+
+def signal_type_family(signal_type: str, registry: Dict[str, Any]) -> str:
+    payload = registry.get(signal_type, {})
+    if isinstance(payload, dict):
+        return clean_text(payload.get("family")) or "unknown"
+    return "unknown"
+
+
+# ---------------------------------------------------
+# CANDIDATE BUILDING
+# ---------------------------------------------------
+
+def is_tradeable(state):
+
+    score = state.get("score", 0)
+    signal_count = state.get("signal_count", 0)
+    strategy_signal_count = state.get("strategy_signal_count", 0)
+    family_count = state.get("family_count", 0)
+    signal_types = state.get("signal_types", {})
+    entity = state.get("entity")
+    classification = classification_map.get(entity, {})
+
+    is_tradeable_flag = classification.get("is_tradeable", False)
+    liquidity_profile = classification.get("liquidity_profile", "unknown")
+
+    # -----------------------------------------
+    # HARD REJECTION (KEEP STRICT)
+    # -----------------------------------------
+
+    if score < 5:
+        return False
+
+    has_pumpfun = signal_types.get("solana_pumpfun_activity", 0) > 10
+
+    if strategy_signal_count < 1 and not has_pumpfun:
+        # allow classified tradeable memecoins
+        if not is_tradeable_flag:
+            return False
+
+    if liquidity_profile == "thin" and score < 10:
+        return False
+
+    # -----------------------------------------
+    # FALLBACK: CONTROLLED HYBRID LOGIC
+    # -----------------------------------------
+
+    has_strong_signal_cluster = signal_count >= 2
+
+    # PRIMARY: real market confirmation
+    if has_velocity or has_liquidity or has_swaps:
+        pass
+
+    # SECONDARY: pumpfun-driven momentum (NO family dependency)
+    elif has_pumpfun and score >= 8:
+        pass
+
+    # TERTIARY: fallback clustering
+    elif has_strong_signal_cluster and score >= 10:
+        pass
+
+    else:
+        return False
+
+    # -----------------------------------------
+    # MINIMUM SIGNAL DEPTH
+    # -----------------------------------------
+
+    if signal_count < 3:
+        return False
+
+    return True
+
+def build_entity_state(rows: List[Dict[str, Any]], cfg: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    strategy_registry = cfg.get("strategy_registry", {})
+    supporting_weights = cfg.get("supporting_signal_weights", {})
+
+    entities: Dict[str, Dict[str, Any]] = {}
+
+    for row in rows:
+        signal_type = clean_text(row.get("signal_type"))
+        entity = clean_text(row.get("entity"))
+        title = clean_text(row.get("title"))
+
+        if not signal_type or not entity:
+            continue
+
+        if is_excluded_entity(entity, cfg):
+            continue
+
+        state = entities.setdefault(
+            entity,
+            {
+                "entity": entity,
+                "score": 0.0,
+                "signal_count": 0,
+                "strategy_signals": [],
+                "support_signals": [],
+                "families": Counter(),
+                "signal_types": Counter(),
+                "titles": [],
+                "reasons": [],
+            },
+        )
+
+        state["signal_count"] += 1
+        state["signal_types"][signal_type] += 1
+
+        if title and len(state["titles"]) < 6:
+            state["titles"].append(title)
+
+        if signal_type in strategy_registry:
+            reg = strategy_registry.get(signal_type, {})
+            family = signal_type_family(signal_type, strategy_registry)
+            base_weight = safe_float(reg.get("base_weight", 0.0), 0.0)
+
+            state["score"] += base_weight
+            state["families"][family] += 1
+            state["strategy_signals"].append(signal_type)
+            state["reasons"].append(f"{signal_type}")
+
+        elif signal_type in supporting_weights:
+            support_weight = safe_float(supporting_weights.get(signal_type, 0.0), 0.0)
+            state["score"] += support_weight
+            state["support_signals"].append(signal_type)
+            state["reasons"].append(f"{signal_type}")
+
+    return entities
+
+
+def finalize_entity_scores(entities: Dict[str, Dict[str, Any]], cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    strategy_registry = cfg.get("strategy_registry", {})
+
+    out: List[Dict[str, Any]] = []
+
+    for entity, state in entities.items():
+        score = safe_float(state.get("score", 0.0), 0.0)
+        families = state.get("families", Counter())
+        signal_types = state.get("signal_types", Counter())
+
+        family_count = len([k for k, v in families.items() if v > 0])
+        strategy_signal_count = len(state.get("strategy_signals", []))
+        support_signal_count = len(state.get("support_signals", []))
+
+        # cross-family confirmation bonus
+        if family_count >= 2:
+            score += 2.2
+            state["reasons"].append("cross_family_confirmation")
+
+        if family_count >= 3:
+            score += 1.4
+            state["reasons"].append("triple_family_alignment")
+
+        # alpha confirmation
+        if signal_types.get("solana_alpha_entry_signal", 0) > 0:
+            score += 1.8
+            state["reasons"].append("alpha_confirmation")
+
+        # memecoin / narrative confirmation
+        if signal_types.get("solana_memecoin_of_the_day", 0) > 0:
+            score += 1.4
+            state["reasons"].append("memecoin_of_the_day")
+
+        if signal_types.get("solana_memecoin_narrative_candidate", 0) > 0:
+            score += 0.9
+            state["reasons"].append("narrative_confirmation")
+
+        # liquidity risk penalty
+        thin_liquidity_count = signal_types.get("solana_thin_liquidity_alert", 0)
+        if thin_liquidity_count > 0:
+            score -= 1.5 * thin_liquidity_count
+            state["reasons"].append(f"thin_liquidity x{thin_liquidity_count}")
+
+        # stronger confidence if there are multiple strategy signals
+        if strategy_signal_count >= 2:
+            score += 1.0
+            state["reasons"].append("multi_strategy_support")
+
+        state["score"] = round(score, 4)
+        state["family_count"] = family_count
+        state["strategy_signal_count"] = strategy_signal_count
+        state["support_signal_count"] = support_signal_count
+
+        dominant_family = "unknown"
+        if families:
+            dominant_family = families.most_common(1)[0][0]
+
+        state["dominant_family"] = dominant_family
+        state["top_signal_types"] = signal_types.most_common(8)
+        state["top_reasons"] = Counter(state["reasons"]).most_common(8)
+
+        out.append(state)
+
+    out.sort(
+        key=lambda x: (
+            safe_float(x.get("score", 0.0), 0.0),
+            safe_int(x.get("family_count", 0), 0),
+            safe_int(x.get("strategy_signal_count", 0), 0),
+            safe_int(x.get("signal_count", 0), 0),
+        ),
+        reverse=True,
+    )
+
+    return out
+
+
+# ---------------------------------------------------
+# DECISION BUILDERS
+# ---------------------------------------------------
+
+def make_summary_text(state: Dict[str, Any]) -> str:
+    entity = clean_text(state.get("entity"))
+    score = safe_float(state.get("score", 0.0), 0.0)
+    dominant_family = clean_text(state.get("dominant_family"))
+    signal_count = safe_int(state.get("signal_count", 0), 0)
+
+    reasons = ", ".join([f"{reason} x{count}" for reason, count in state.get("top_reasons", [])[:5]])
+    top_types = ", ".join([f"{stype} x{count}" for stype, count in state.get("top_signal_types", [])[:5]])
+
+    return (
+        f"{entity} scored {score:.2f} | dominant_family={dominant_family} | "
+        f"signal_count={signal_count} | top_types={top_types or 'none'} | "
+        f"reasons={reasons or 'none'}"
+    )
+
+
+def build_trade_decision(rank: int, state: Dict[str, Any]) -> Signal:
+    return Signal(
+        timestamp=utc_now(),
+        source="toknclaw",
+        signal_type="solana_trade_decision",
+        entity=state["entity"],
+        title=f"Solana trade decision #{rank}",
+        summary=make_summary_text(state),
+        confidence=0.88,
+        sentiment_score=0.44,
+        raw_url=None,
+    )
+
+
+def build_trade_candidate(rank: int, state: Dict[str, Any]) -> Signal:
+    return Signal(
+        timestamp=utc_now(),
+        source="toknclaw",
+        signal_type="solana_trade_candidate",
+        entity=state["entity"],
+        title=f"Solana trade candidate #{rank}",
+        summary=make_summary_text(state),
+        confidence=0.79,
+        sentiment_score=0.26,
+        raw_url=None,
+    )
+
+
+def build_trade_avoid(state: Dict[str, Any]) -> Signal:
+    return Signal(
+        timestamp=utc_now(),
+        source="toknclaw",
+        signal_type="solana_trade_avoid",
+        entity=state["entity"],
+        title="Avoid Solana trade setup",
+        summary=make_summary_text(state),
+        confidence=0.81,
+        sentiment_score=-0.32,
+        raw_url=None,
+    )
+
+
+def build_allocator_summary(
+    total_scored: int,
+    decision_count: int,
+    candidate_count: int,
+    avoid_count: int,
+    family_counts: Dict[str, int],
+) -> Signal:
+    family_text = ", ".join([f"{k}={v}" for k, v in sorted(family_counts.items())])
+
+    return Signal(
+        timestamp=utc_now(),
+        source="toknclaw",
+        signal_type="solana_strategy_allocator_summary",
+        entity="SOLANA_STRATEGY_ALLOCATOR",
+        title="Solana strategy allocator summary",
+        summary=(
+            f"Allocator evaluated {total_scored} tokens | "
+            f"decisions={decision_count} | candidates={candidate_count} | avoids={avoid_count} | "
+            f"family_distribution={family_text or 'none'}"
+        ),
+        confidence=0.84,
+        sentiment_score=0.12,
+        raw_url=None,
+    )
+
+
+# ---------------------------------------------------
+# ALLOCATION LOGIC
+# ---------------------------------------------------
+
+def allocate(
+    states: List[Dict[str, Any]],
+    cfg: Dict[str, Any]
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+
+    decision_threshold = safe_float(cfg.get("decision_score_threshold", 11.0), 11.0)
+    candidate_threshold = safe_float(cfg.get("candidate_score_threshold", 6.0), 6.0)
+    avoid_threshold = safe_float(cfg.get("avoid_score_threshold", -2.5), -2.5)
+
+    max_trade_decisions = safe_int(cfg.get("max_trade_decisions", 8), 8)
+    max_trade_candidates = safe_int(cfg.get("max_trade_candidates", 16), 16)
+    max_trade_avoids = safe_int(cfg.get("max_trade_avoids", 12), 12)
+    max_per_family = safe_int(cfg.get("max_decisions_per_strategy_family", 3), 3)
+
+    decisions: List[Dict[str, Any]] = []
+    candidates: List[Dict[str, Any]] = []
+    avoids: List[Dict[str, Any]] = []
+
+    family_decision_counts: Counter = Counter()
+
+    # ---------------------------------------------------
+    # PRIMARY PASS (STRICT)
+    # ---------------------------------------------------
+
+    for state in states:
+        score = safe_float(state.get("score", 0.0), 0.0)
+        family_count = safe_int(state.get("family_count", 0), 0)
+        strategy_signal_count = safe_int(state.get("strategy_signal_count", 0), 0)
+        dominant_family = clean_text(state.get("dominant_family")) or "unknown"
+
+        # HIGH-CONVICTION DECISIONS
+        if (
+            score >= decision_threshold
+            and family_count >= 1
+            and strategy_signal_count >= 1
+            and state.get("signal_count", 0) >= 3  # NEW
+            and family_decision_counts[dominant_family] < max_per_family
+            and len(decisions) < max_trade_decisions
+        ):
+            decisions.append(state)
+            family_decision_counts[dominant_family] += 1
+            continue
+
+        # MID-TIER CANDIDATES
+        if (
+            score >= candidate_threshold
+            and (strategy_signal_count >= 1 or family_count >= 1)
+            and len(candidates) < max_trade_candidates
+        ):
+            candidates.append(state)
+            continue
+
+        # LOW SCORE AVOIDS
+        if (
+            score <= avoid_threshold
+            and len(avoids) < max_trade_avoids
+        ):
+            avoids.append(state)
+
+    # ---------------------------------------------------
+    # FALLBACK PROMOTION (CRITICAL FIX)
+    # ---------------------------------------------------
+
+    if not decisions and candidates:
+
+        promoted: List[Dict[str, Any]] = []
+
+        for state in candidates:
+
+            dominant_family = clean_text(state.get("dominant_family")) or "unknown"
+
+            # respect family caps
+            if family_decision_counts[dominant_family] >= max_per_family:
+                continue
+
+            if len(promoted) >= max_trade_decisions:
+                break
+
+            promoted.append(state)
+            family_decision_counts[dominant_family] += 1
+
+        if promoted:
+            promoted_entities = {
+                clean_text(s.get("entity"))
+                for s in promoted
+            }
+
+            decisions.extend(promoted)
+
+            # remove promoted from candidates
+            candidates = [
+                s for s in candidates
+                if clean_text(s.get("entity")) not in promoted_entities
+            ]
+
+    # ---------------------------------------------------
+    # SECONDARY FILL (OPTIONAL BALANCING)
+    # ---------------------------------------------------
+
+    if len(decisions) < max_trade_decisions:
+
+        for state in candidates:
+
+            dominant_family = clean_text(state.get("dominant_family")) or "unknown"
+
+            if family_decision_counts[dominant_family] >= max_per_family:
+                continue
+
+            if len(decisions) >= max_trade_decisions:
+                break
+
+            decisions.append(state)
+            family_decision_counts[dominant_family] += 1
+
+    # ---------------------------------------------------
+    # FINAL SORTING (STABILITY)
+    # ---------------------------------------------------
+
+    decisions.sort(key=lambda x: safe_float(x.get("score", 0.0), 0.0), reverse=True)
+    candidates.sort(key=lambda x: safe_float(x.get("score", 0.0), 0.0), reverse=True)
+    avoids.sort(key=lambda x: safe_float(x.get("score", 0.0), 0.0))
+
+    return decisions, candidates, avoids
+
+# ---------------------------------------------------
+# PUBLIC COLLECTOR
+# ---------------------------------------------------
+
+@register_collector(
+    name="solana_strategy_allocator",
+    priority=1,
+    tags=["strategy", "allocator", "trading"],
+    category="strategy",
+    execution="fast",
+)
+def fetch_solana_strategy_allocator_signals() -> List[Signal]:
+    started = time.time()
+    cfg = load_engine_config()
+    signals: List[Signal] = []
+
+    if not bool(cfg.get("enabled", True)):
+        info_log("disabled by config")
+        return signals
+
+    lake = load_signal_lake()
+    raw_rows = lake.get("signals", [])
+    rows = object_signals_only(raw_rows)
+    classification = load_signal_lake().get("entity_classification", [])
+    classification_map = {
+        c.get("entity"): c for c in classification
+    }
+
+
+    print(f"[ALLOCATOR DEBUG] raw_rows={len(rows)}")
+
+    lookback_hours = safe_int(cfg.get("lookback_hours", 12), 12)
+    # rows = recent_rows(rows, lookback_hours)
+
+    print(f"[ALLOCATOR DEBUG] filtered_rows={len(rows)}")
+
+    entity_state = build_entity_state(rows, cfg)
+    scored_states = finalize_entity_scores(entity_state, cfg)
+
+    print("[ALLOCATOR DEBUG] score sample:")
+    for s in scored_states[:10]:
+        print(f"score={s.get('score')} entity={s.get('entity')}")
+
+    print(f"[ALLOCATOR DEBUG] pre_filter_scored={len(scored_states)}")
+
+    for s in scored_states[:10]:
+        stypes = s.get("signal_types", {})
+        print(
+            "[ALLOCATOR ENTITY]",
+            f"entity={s.get('entity')}",
+            f"score={s.get('score')}",
+            f"signal_count={s.get('signal_count')}",
+            f"family_count={s.get('family_count')}",
+            f"strategy_signal_count={s.get('strategy_signal_count')}",
+            f"signal_types={dict(stypes)}",
+        )
+
+    # ✅ CRITICAL FIX — TRADEABILITY FILTER
+    scored_states = [s for s in scored_states if is_tradeable(s)]
+
+    print(f"[ALLOCATOR DEBUG] post_filter_scored={len(scored_states)}")
+
+    max_tokens_scored = safe_int(cfg.get("max_tokens_scored", 200), 200)
+    scored_states = scored_states[:max_tokens_scored]
+
+    decisions, candidates, avoids = allocate(scored_states, cfg)
+
+    decision_signals = [
+        build_trade_decision(rank=i + 1, state=state)
+        for i, state in enumerate(decisions)
+    ]
+
+    candidate_signals = [
+        build_trade_candidate(rank=i + 1, state=state)
+        for i, state in enumerate(candidates)
+    ]
+
+    avoid_signals = [
+        build_trade_avoid(state=state)
+        for state in avoids
+    ]
+
+    signals.extend(decision_signals)
+    signals.extend(candidate_signals)
+    signals.extend(avoid_signals)
+
+    family_counts: Dict[str, int] = dict(
+        Counter([clean_text(s.get("dominant_family")) for s in decisions if clean_text(s.get("dominant_family"))])
+    )
+
+    signals.append(
+        build_allocator_summary(
+            total_scored=len(scored_states),
+            decision_count=len(decision_signals),
+            candidate_count=len(candidate_signals),
+            avoid_count=len(avoid_signals),
+            family_counts=family_counts,
+        )
+    )
+
+    runtime = round(time.time() - started, 2)
+
+    info_log(
+        f"rows={len(rows)} "
+        f"tokens_scored={len(scored_states)} "
+        f"decisions={len(decision_signals)} "
+        f"candidates={len(candidate_signals)} "
+        f"avoids={len(avoid_signals)} "
+        f"signals_returned={len(signals)} "
+        f"runtime={runtime}s"
+    )
+
+    return signals
+
+
+# ---------------------------------------------------
+# ENTRYPOINT
+# ---------------------------------------------------
+
+if __name__ == "__main__":
+    fetch_solana_strategy_allocator_signals()
+{
+  "lookback_hours": 12,
+  "max_tokens_scored": 200,
+  "max_trade_decisions": 8,
+  "max_trade_candidates": 16,
+  "max_trade_avoids": 12,
+  "decision_score_threshold": 11.0,
+  "candidate_score_threshold": 6.0,
+  "avoid_score_threshold": -2.5,
+  "max_decisions_per_strategy_family": 3
+}

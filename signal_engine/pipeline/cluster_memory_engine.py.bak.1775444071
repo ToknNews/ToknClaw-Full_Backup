@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""
+# ============================================================
+# 🦞 TOKNCLAW — CLUSTER MEMORY ENGINE
+# ============================================================
+#
+# ████████╗ ██████╗ ██╗  ██╗███╗   ██╗ ██████╗██╗      █████╗ ██╗    ██╗
+# ╚══██╔══╝██╔═══██╗██║ ██╔╝████╗  ██║██╔════╝██║     ██╔══██╗██║    ██║
+#    ██║   ██║   ██║█████╔╝ ██╔██╗ ██║██║     ██║     ███████║██║ █╗ ██║
+#    ██║   ██║   ██║██╔═██╗ ██║╚██╗██║██║     ██║     ██╔══██║██║███╗██║
+#    ██║   ╚██████╔╝██║  ██╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
+#    ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+#
+#
+# PURPOSE:
+# - Aggregate signals over time into clusters
+# - Preserve raw_url for click-through
+# - Maintain both active + long-term cluster memory
+# ============================================================
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Any
+
+# ---------------------------------------------------
+# PATHS
+# ---------------------------------------------------
+
+SNAPSHOT_PATH = Path("/opt/toknclaw/data/snapshots/latest_snapshot_trading.json")
+MEMORY_PATH = Path("/opt/toknclaw/data/analytics/cluster_memory.json")
+ACTIVE_PATH = Path("/opt/toknclaw/data/analytics/cluster_active.json")
+
+# ---------------------------------------------------
+# CONFIG
+# ---------------------------------------------------
+
+ACTIVE_WINDOW_SECONDS = 60 * 60 * 4   # 4 hours
+DECAY_FACTOR = 0.92                  # per run decay
+MAX_ITEMS_PER_CLUSTER = 15
+
+# ---------------------------------------------------
+# HELPERS
+# ---------------------------------------------------
+
+def now_ts():
+    return time.time()
+
+def utc_now():
+    return datetime.now(timezone.utc).isoformat()
+
+def load_json(path):
+    if not path.exists():
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+# ---------------------------------------------------
+# SEMANTIC GROUPING
+# ---------------------------------------------------
+
+def map_signal_group(signal_type: str) -> str:
+    if "funding" in signal_type:
+        return "Funding Shift"
+    if "open_interest" in signal_type or "oi" in signal_type:
+        return "OI Expansion"
+    if "liquidation" in signal_type:
+        return "Liquidation Event"
+    if "trend" in signal_type:
+        return "Trend Movement"
+    return "General Activity"
+
+def map_sentiment(signal: Dict[str, Any]) -> str:
+    direction = str(signal.get("direction", "")).lower()
+    if "bull" in direction:
+        return "bullish"
+    if "bear" in direction:
+        return "bearish"
+    return "neutral"
+
+# ---------------------------------------------------
+# CORE
+# ---------------------------------------------------
+
+def build_cluster_key(entity: str, signal_type: str) -> str:
+    group = map_signal_group(signal_type)
+    return f"{entity}_{group}".lower().replace(" ", "_")
+
+def normalize_signal(signal: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "entity": signal.get("entity"),
+        "signal_type": signal.get("signal_type"),
+        "title": signal.get("title"),
+        "summary": signal.get("summary"),
+        "timestamp": signal.get("timestamp"),
+        "confidence": signal.get("confidence", 0.0),
+        "raw_url": signal.get("raw_url"),
+        "sentiment": map_sentiment(signal),
+        "source": signal.get("source", "toknclaw")
+    }
+
+# ---------------------------------------------------
+# ENGINE
+# ---------------------------------------------------
+
+def run():
+
+    snapshot = load_json(SNAPSHOT_PATH)
+    memory = load_json(MEMORY_PATH)
+
+    signals = snapshot.get("signals", [])
+
+    if "clusters" not in memory:
+        memory["clusters"] = {}
+
+    clusters = memory["clusters"]
+
+    current_time = now_ts()
+
+    # ---------------------------------------------------
+    # INGEST SIGNALS
+    # ---------------------------------------------------
+
+    for s in signals:
+        entity = s.get("entity")
+        signal_type = s.get("signal_type")
+
+        if not entity or not signal_type:
+            continue
+
+        key = build_cluster_key(entity, signal_type)
+
+        if key not in clusters:
+            clusters[key] = {
+                "cluster_id": key,
+                "title": f"{entity} {map_signal_group(signal_type)}",
+                "entity": entity,
+                "signal_group": map_signal_group(signal_type),
+                "items": [],
+                "strength": 0,
+                "last_updated": utc_now(),
+                "first_seen": utc_now(),
+            }
+
+        cluster = clusters[key]
+
+        normalized = normalize_signal(s)
+
+        # append item
+        cluster["items"].append(normalized)
+
+        # limit size
+        cluster["items"] = cluster["items"][-MAX_ITEMS_PER_CLUSTER:]
+
+        cluster["strength"] += 1
+        cluster["last_updated"] = utc_now()
+
+    # ---------------------------------------------------
+    # DECAY + ACTIVE FILTER
+    # ---------------------------------------------------
+
+    active_clusters = []
+
+    for key, c in clusters.items():
+
+        # decay strength
+        c["strength"] *= DECAY_FACTOR
+
+        last_ts = datetime.fromisoformat(c["last_updated"]).timestamp()
+
+        age = current_time - last_ts
+
+        if age <= ACTIVE_WINDOW_SECONDS:
+            velocity = c["strength"] / max(age / 60, 1)
+
+            active_clusters.append({
+                **c,
+                "velocity": round(velocity, 4),
+                "score": round(c["strength"] * velocity, 4)
+            })
+
+    # ---------------------------------------------------
+    # SORT (HYBRID)
+    # ---------------------------------------------------
+
+    active_clusters.sort(key=lambda x: x["score"], reverse=True)
+
+    # ---------------------------------------------------
+    # SAVE
+    # ---------------------------------------------------
+
+    save_json(MEMORY_PATH, {"clusters": clusters})
+
+    save_json(ACTIVE_PATH, {
+        "generated_at": utc_now(),
+        "cluster_count": len(active_clusters),
+        "clusters": active_clusters[:20]
+    })
+
+    print(f"[CLUSTER ENGINE] total={len(clusters)} active={len(active_clusters)}")
+
+# ---------------------------------------------------
+
+if __name__ == "__main__":
+    run()

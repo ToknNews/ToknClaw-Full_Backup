@@ -1,0 +1,16 @@
+.env
+*.key
+*.pem
+__pycache__/
+*.pyc
+*.log
+*.sqlite
+*.sqlite3
+*.db
+venv/
+venv*/
+uploads/
+node_modules/
+secrets/
+config/backups/*
+.DS_Store

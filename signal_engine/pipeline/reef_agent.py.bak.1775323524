@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""
+# ============================================================
+# 🦞 TOKNCLAW — REEF TELEGRAM AGENT
+# ============================================================
+#
+# ████████╗ ██████╗ ██╗  ██╗███╗   ██╗ ██████╗██╗      █████╗ ██╗    ██╗
+# ╚══██╔══╝██╔═══██╗██║ ██╔╝████╗  ██║██╔════╝██║     ██╔══██╗██║    ██║
+#    ██║   ██║   ██║█████╔╝ ██╔██╗ ██║██║     ██║     ███████║██║ █╗ ██║
+#    ██║   ██║   ██║██╔═██╗ ██║╚██╗██║██║     ██║     ██╔══██║██║███╗██║
+#    ██║   ╚██████╔╝██║  ██╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
+#    ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+#
+# SYSTEM: ToknClaw Intelligence Layer
+# MODULE: reef_agent
+# PURPOSE:
+# - Read strategy_decisions.json
+# - Send recommendations to Telegram
+# - Wait for approval
+# - Apply config patches safely with rollback
+# ============================================================
+"""
+
+import json
+import requests
+import time
+from pathlib import Path
+from datetime import datetime
+
+# ---------------------------------------------------
+# CONFIG
+# ---------------------------------------------------
+
+TELEGRAM_TOKEN = "8623563940:AAEED06zuwicF_yTbDVNXbzlfX0FzD2M6TM"
+CHAT_ID = "-1003751017185"
+
+DECISIONS_PATH = Path("/opt/toknclaw/data/analytics/strategy_decisions.json")
+WEIGHTS_PATH = Path("/opt/toknclaw/config/trade_signal_weights.json")
+
+BACKUP_DIR = Path("/opt/toknclaw/config/backups")
+STATE_PATH = Path("/opt/toknclaw/data/analytics/reef_agent_state.json")
+
+POLL_INTERVAL = 5
+MIN_WEIGHT = 0.1
+
+# ---------------------------------------------------
+# TELEGRAM
+# ---------------------------------------------------
+
+def send_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": CHAT_ID, "text": text})
+
+
+def send_proposal(strategy, text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "reply_markup": {
+            "inline_keyboard": [[
+                {"text": "✅ Approve", "callback_data": f"APPROVE|{strategy}"},
+                {"text": "❌ Reject", "callback_data": f"REJECT|{strategy}"}
+            ]]
+        }
+    }
+
+    requests.post(url, json=payload)
+
+
+def get_updates(offset=None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    params = {"timeout": 100}
+    if offset:
+        params["offset"] = offset
+    return requests.get(url, params=params).json()
+
+# ---------------------------------------------------
+# FILE HELPERS
+# ---------------------------------------------------
+
+def load_json(path):
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def save_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def backup_file(path):
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    backup_path = BACKUP_DIR / f"{path.name}.{timestamp}.bak"
+    save_json(backup_path, load_json(path))
+    return backup_path
+
+# ---------------------------------------------------
+# STATE
+# ---------------------------------------------------
+
+def load_state():
+    return load_json(STATE_PATH)
+
+
+def save_state(state):
+    save_json(STATE_PATH, state)
+
+# ---------------------------------------------------
+# PROPOSAL
+# ---------------------------------------------------
+
+def build_proposal(decision):
+    strategy = decision["strategy_key"]
+    confidence = decision.get("sample_confidence", 0)
+
+    return f"""🌊 Reef Optimization Proposal
+
+Strategy: {strategy}
+Health: underperforming
+Confidence: {confidence:.2f}
+
+Action:
+↓ Downweight {strategy}
+"""
+
+# ---------------------------------------------------
+# APPLY PATCH
+# ---------------------------------------------------
+
+def apply_weight_patch(strategy):
+    config = load_json(WEIGHTS_PATH)
+
+    if strategy not in config:
+        return False, "Strategy not found"
+
+    backup = backup_file(WEIGHTS_PATH)
+
+    old = config[strategy]
+    new = max(round(old * 0.5, 4), MIN_WEIGHT)
+
+    print(f"[REEF] Applying patch {strategy}: {old} → {new}")
+
+    config[strategy] = new
+    save_json(WEIGHTS_PATH, config)
+
+    return True, f"{strategy}: {old} → {new} (backup: {backup})"
+
+# ---------------------------------------------------
+# MAIN LOOP
+# ---------------------------------------------------
+
+def run_agent():
+
+    if TELEGRAM_TOKEN == "YOUR_BOT_TOKEN":
+        raise Exception("Set TELEGRAM_TOKEN")
+
+    last_update_id = None
+
+    send_message("🌊 Reef Agent online | ToknClaw Optimization")
+
+    decisions = load_json(DECISIONS_PATH)
+    actions = decisions.get("strategy_decisions", [])
+
+    state = load_state()
+    sent = state.get("sent", {})
+
+    pending = {}
+
+    # SEND PROPOSALS
+    for d in actions:
+        if d["realized"]["health"] != "underperforming":
+            continue
+
+        strategy = d["strategy_key"]
+
+        if strategy in sent:
+            continue
+
+        msg = build_proposal(d)
+        send_proposal(strategy, msg)
+
+        pending[strategy] = True
+        sent[strategy] = True
+
+    save_state({"sent": sent})
+
+    # LISTEN LOOP
+    while True:
+
+        updates = get_updates(last_update_id)
+
+        for u in updates.get("result", []):
+
+            last_update_id = u["update_id"] + 1
+
+            # BUTTON HANDLING
+            callback = u.get("callback_query")
+
+            if callback:
+                data = callback.get("data", "")
+                parts = data.split("|")
+
+                if len(parts) != 2:
+                    continue
+
+                cmd, strategy = parts
+
+                if strategy not in pending:
+                    continue
+
+                if cmd == "APPROVE":
+                    ok, msg = apply_weight_patch(strategy)
+                    send_message(f"✅ Applied: {msg}")
+                    pending.pop(strategy, None)
+
+                elif cmd == "REJECT":
+                    send_message(f"❌ Rejected: {strategy}")
+                    pending.pop(strategy, None)
+
+                requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
+                    json={"callback_query_id": callback["id"]}
+                )
+
+                continue
+
+        time.sleep(POLL_INTERVAL)
+
+
+if __name__ == "__main__":
+    run_agent()

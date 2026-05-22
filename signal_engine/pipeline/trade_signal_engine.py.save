@@ -1,0 +1,521 @@
+#!/usr/bin/env python3
+"""
+# ============================================================
+# 🦞 TOKNCLAW — MARKET INTELLIGENCE ENGINE
+# ============================================================
+#
+# ████████╗ ██████╗ ██╗  ██╗███╗   ██╗ ██████╗██╗      █████╗ ██╗    ██╗
+# ╚══██╔══╝██╔═══██╗██║ ██╔╝████╗  ██║██╔════╝██║     ██╔══██╗██║    ██║
+#    ██║   ██║   ██║█████╔╝ ██╔██╗ ██║██║     ██║     ███████║██║ █╗ ██║
+#    ██║   ██║   ██║██╔═██╗ ██║╚██╗██║██║     ██║     ██╔══██║██║███╗██║
+#    ██║   ╚██████╔╝██║  ██╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
+#    ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+#
+# SYSTEM: ToknClaw Intelligence Layer
+# MODULE: trade_signal_engine
+# PURPOSE: Aggregate ToknClaw perp market signals into independent,
+#          strategy-attributed trade candidates while preserving the
+#          existing blended scoring diagnostics, conflict handling,
+#          movement detection, priority ranking, and OpenClaw-friendly
+#          explainability contracts.
+#
+# AUTHOR: TOKN SYSTEM
+# ============================================================
+"""
+
+from __future__ import annotations
+
+# ---------------------------------------------------
+# BOOTSTRAP
+# ---------------------------------------------------
+
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# ---------------------------------------------------
+# IMPORTS
+# ---------------------------------------------------
+
+import re
+from collections import Counter
+from datetime import UTC, datetime
+from typing import Any, Dict, List, Tuple
+
+from signal_engine.runtime_config import load_config
+from signal_engine.pipeline.price_oi_trend_engine import build_price_oi_trend
+
+# ---------------------------------------------------
+# CONFIG
+# ---------------------------------------------------
+
+CONFIG_FILE = "trade_signal_config.json"
+WEIGHTS_FILE = "trade_signal_weights.json"
+
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "signal_amplifier": 5.0,
+    "fallback_bias": 0.05,
+    "conflict_hard_no_trade": 0.60,
+    "conflict_heavy_penalty": 0.60,
+    "conflict_light_penalty": 0.40,
+    "conflict_heavy_multiplier": 0.78,
+    "conflict_light_multiplier": 0.90,
+    "min_actionable_score": 0.08,
+    "min_neutral_diff": 0.06,
+    "strong_score_threshold": 0.35,
+    "strong_diff_threshold": 0.14,
+    "weak_direction_score_threshold": 0.16,
+    "direction_dominance_ratio": 1.20,
+    "priority_strong_multiplier": 1.20,
+    "priority_directional_multiplier": 1.05,
+    "priority_no_trade_multiplier": 0.40,
+    "priority_neutral_multiplier": 0.70,
+    "max_output_rows": 50,
+    "max_reasons": 10,
+    "inject_trend_signals": True,
+    "trend_signal_dedup": True,
+    "trend_signal_allow_replace": False,
+
+    # V2 strategy execution controls
+    "emit_strategy_rows": True,
+    "emit_blended_rows": False,
+    "include_discrete_rules_strategy": True,
+    "min_strategy_actionable_score": 0.18,
+    "strategy_priority_multiplier": 1.15,
+}
+
+
+STRATEGY_FAMILIES: List[str] = [
+    "discrete_rules",
+    "crowding_fade",
+    "trend_continuation",
+    "funding_baseline",
+    "oi_acceleration",
+    "micro_trend",
+    "breakout_continuation",
+]
+
+
+def _load_engine_config() -> Dict[str, Any]:
+    cfg = load_config(CONFIG_FILE)
+    if not isinstance(cfg, dict):
+        return dict(DEFAULT_CONFIG)
+
+    merged = dict(DEFAULT_CONFIG)
+    merged.update(cfg)
+    return merged
+
+
+ENGINE_CONFIG = _load_engine_config()
+
+# ---------------------------------------------------
+# HELPERS
+# ---------------------------------------------------
+
+def _safe_list(x: Any) -> List[Any]:
+    return x if isinstance(x, list) else []
+
+
+def _safe_dict(x: Any) -> Dict[str, Any]:
+    return x if isinstance(x, dict) else {}
+
+
+def _safe_str(x: Any) -> str:
+    return str(x or "").strip()
+
+
+def _safe_float(x: Any, d: float = 0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return d
+
+
+def _safe_int_like(x: Any, default: int = 0) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+
+def _safe_bool(x: Any, default: bool = False) -> bool:
+    if isinstance(x, bool):
+        return x
+    if isinstance(x, str):
+        return x.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(x, (int, float)):
+        return bool(x)
+    return default
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _clamp(x: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, x))
+
+
+def _cfg_float(key: str, default: float) -> float:
+    return _safe_float(ENGINE_CONFIG.get(key), default)
+
+
+def _cfg_int(key: str, default: int) -> int:
+    return _safe_int_like(ENGINE_CONFIG.get(key), default)
+
+
+def _cfg_bool(key: str, default: bool) -> bool:
+    return _safe_bool(ENGINE_CONFIG.get(key), default)
+
+
+def _scaled(score: float) -> float:
+    amplifier = _cfg_float("signal_amplifier", 5.0)
+    return round(score * amplifier, 6)
+
+
+def _parse_summary_float(summary: Any, key: str, default: float = 0.0) -> float:
+    text = _safe_str(summary)
+    if not text:
+        return default
+
+    pattern = rf"{re.escape(key)}=([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
+    match = re.search(pattern, text)
+
+    if not match:
+        return default
+
+    return _safe_float(match.group(1), default)
+
+
+def _rows_of_type(rows: List[Dict[str, Any]], signal_type: str) -> List[Dict[str, Any]]:
+    return [r for r in rows if _safe_str(r.get("signal_type")) == signal_type]
+
+
+def _unique_reasons(reasons: List[str], limit: int = 10) -> List[str]:
+    seen = set()
+    out: List[str] = []
+
+    for reason in reasons:
+        text = _safe_str(reason)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= limit:
+            break
+
+    return out
+
+
+def _direction_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    return {
+        "strong_bullish_count": sum(1 for r in rows if r.get("direction") == "strong_bullish"),
+        "bullish_count": sum(1 for r in rows if r.get("direction") == "bullish"),
+        "neutral_count": sum(1 for r in rows if r.get("direction") == "neutral"),
+        "no_trade_count": sum(1 for r in rows if r.get("direction") == "no_trade"),
+        "bearish_count": sum(1 for r in rows if r.get("direction") == "bearish"),
+        "strong_bearish_count": sum(1 for r in rows if r.get("direction") == "strong_bearish"),
+    }
+
+
+def _inject_trend_signals(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    if not _cfg_bool("inject_trend_signals", True):
+        return snapshot
+
+    signals = snapshot.get("signals")
+    if not isinstance(signals, list):
+        snapshot["signals"] = []
+        signals = snapshot["signals"]
+
+    trend_signals = build_price_oi_trend(snapshot)
+    if not isinstance(trend_signals, list) or not trend_signals:
+        return snapshot
+
+    if not _cfg_bool("trend_signal_dedup", True):
+        signals.extend(trend_signals)
+        return snapshot
+
+    existing_keys = set()
+    for row in signals:
+        row = _safe_dict(row)
+        existing_keys.add((
+            _safe_str(row.get("signal_type")),
+            _safe_str(row.get("entity")).upper(),
+        ))
+
+    for row in trend_signals:
+        row = _safe_dict(row)
+        key = (
+            _safe_str(row.get("signal_type")),
+            _safe_str(row.get("entity")).upper(),
+        )
+
+        if key in existing_keys and not _cfg_bool("trend_signal_allow_replace", False):
+            continue
+
+        signals.append(row)
+        existing_keys.add(key)
+
+    return snapshot
+
+# ---------------------------------------------------
+# SIGNAL INDEX
+# ---------------------------------------------------
+
+def _signals_by_entity(snapshot: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+
+    for s in _safe_list(snapshot.get("signals")):
+        s = _safe_dict(s)
+
+        raw_entity = _safe_str(s.get("entity"))
+        entity = raw_entity.upper()
+
+        if not entity:
+            continue
+
+        bucket = out.setdefault(entity, {
+            "entity": entity,
+            "rows": [],
+            "types": Counter(),
+        })
+
+        signal_type = _safe_str(s.get("signal_type"))
+        if signal_type:
+            bucket["types"][signal_type] += 1
+
+        bucket["rows"].append(s)
+
+    return out
+
+# ---------------------------------------------------
+# DISCRETE RULES
+# ---------------------------------------------------
+
+DISCRETE_SIGNAL_RULES: Dict[str, Dict[str, Any]] = {
+    "solana_strategy_entry_dip_buy": {"bias": "bullish", "score": 0.25, "reason": "dip_entry"},
+    "solana_strategy_watch_dip_buy": {"bias": "bullish", "score": 0.10, "reason": "dip_watch"},
+    "solana_strategy_avoid_dip_buy": {"bias": "bearish", "score": 0.30, "reason": "dip_avoid"},
+    "perp_strategy_crowded_longs": {"bias": "bearish", "score": 0.30, "reason": "crowded_longs"},
+    "perp_strategy_crowded_shorts": {"bias": "bullish", "score": 0.30, "reason": "crowded_shorts"},
+    "perp_strategy_short_squeeze_watch": {"bias": "bullish", "score": 0.42, "reason": "short_squeeze_watch"},
+    "perp_strategy_long_liquidation_watch": {"bias": "bearish", "score": 0.42, "reason": "long_liq_watch"},
+    "perp_open_interest_build_accelerating": {"bias": "bullish", "score": 0.20, "reason": "oi_build_accel"},
+    "perp_open_interest_unwind_accelerating": {"bias": "bearish", "score": 0.20, "reason": "oi_unwind_accel"},
+    "perp_open_interest_build_decelerating": {"bias": "bearish", "score": 0.10, "reason": "oi_build_decel"},
+    "perp_liquidation_risk_long_flush": {"bias": "bearish", "score": 0.35, "reason": "long_flush"},
+    "perp_liquidation_risk_short_flush": {"bias": "bullish", "score": 0.35, "reason": "short_flush"},
+    "perp_squeeze_confirmation_bullish": {"bias": "bullish", "score": 0.48, "reason": "bullish_confirm"},
+    "perp_squeeze_confirmation_bearish": {"bias": "bearish", "score": 0.48, "reason": "bearish_confirm"},
+    "perp_trend_bullish": {"bias": "bullish", "score": 0.40, "reason": "trend_bull"},
+    "perp_trend_bearish": {"bias": "bearish", "score": 0.40, "reason": "trend_bear"},
+    "perp_trend_short_unwind": {"bias": "bullish", "score": 0.25, "reason": "short_unwind"},
+    "perp_trend_long_unwind": {"bias": "bearish", "score": 0.25, "reason": "long_unwind"},
+}
+
+
+def _apply_discrete_rules(types: Counter) -> Tuple[float, float, List[str]]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    for signal_type, rule in DISCRETE_SIGNAL_RULES.items():
+        count = int(types.get(signal_type, 0))
+        if count <= 0:
+            continue
+
+        score = _safe_float(rule.get("score"), 0.0) * count
+        bias = _safe_str(rule.get("bias"))
+        reason = _safe_str(rule.get("reason"))
+
+        if bias == "bullish":
+            bullish += score
+        elif bias == "bearish":
+            bearish += score
+
+        if reason:
+            reasons.append(reason)
+
+    return _scaled(bullish), _scaled(bearish), reasons
+
+# ---------------------------------------------------
+# STRATEGY FAMILIES
+# ---------------------------------------------------
+
+def _strategy_crowding_fade(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    if int(types.get("perp_strategy_crowded_longs", 0)) > 0:
+        bearish += 0.18
+        reasons.append("crowding_fade_longs")
+
+    if int(types.get("perp_strategy_crowded_shorts", 0)) > 0:
+        bullish += 0.18
+        reasons.append("crowding_fade_shorts")
+
+    if int(types.get("perp_liquidation_risk_long_flush", 0)) > 0:
+        bearish += 0.12
+        reasons.append("crowding_liq_long")
+
+    if int(types.get("perp_liquidation_risk_short_flush", 0)) > 0:
+        bullish += 0.12
+        reasons.append("crowding_liq_short")
+
+    return {"name": "crowding_fade", "bullish": _scaled(bullish), "bearish": _scaled(bearish), "reasons": reasons}
+
+
+def _strategy_trend_continuation(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    if int(types.get("perp_trend_bullish", 0)) > 0:
+        bullish += 0.28
+        reasons.append("continuation_bull")
+
+    if int(types.get("perp_trend_bearish", 0)) > 0:
+        bearish += 0.28
+        reasons.append("continuation_bear")
+
+    if int(types.get("perp_trend_short_unwind", 0)) > 0:
+        bullish += 0.10
+        reasons.append("continuation_short_unwind")
+
+    if int(types.get("perp_trend_long_unwind", 0)) > 0:
+        bearish += 0.10
+        reasons.append("continuation_long_unwind")
+
+    return {"name": "trend_continuation", "bullish": _scaled(bullish), "bearish": _scaled(bearish), "reasons": reasons}
+
+
+def _strategy_funding_baseline(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    funding_rows = _rows_of_type(rows, "perp_funding_rate")
+    if not funding_rows:
+        return {"name": "funding_baseline", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    values: List[float] = []
+    for row in funding_rows:
+        avg = _parse_summary_float(row.get("summary"), "avg", 0.0)
+        if avg != 0.0:
+            values.append(avg)
+
+    if not values:
+        return {"name": "funding_baseline", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    avg_funding = sum(values) / len(values)
+    abs_funding = abs(avg_funding)
+
+    floor = 0.00003
+    ceiling = 0.00030
+    cap_score = 0.18
+
+    if abs_funding >= floor:
+        normalized = min(max((abs_funding - floor) / (ceiling - floor), 0.0), 1.0)
+        score = round(normalized * cap_score, 6)
+
+        if avg_funding < 0:
+            bullish += score
+            reasons.append("funding_negative")
+        elif avg_funding > 0:
+            bearish += score
+            reasons.append("funding_positive")
+
+    if int(types.get("perp_funding_divergence", 0)) > 0:
+        if avg_funding < 0:
+            bullish += 0.04
+            reasons.append("funding_divergence")
+        elif avg_funding > 0:
+            bearish += 0.04
+            reasons.append("funding_divergence")
+
+    return {"name": "funding_baseline", "bullish": _scaled(bullish), "bearish": _scaled(bearish), "reasons": reasons}
+
+
+def _strategy_oi_acceleration(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    accel_rows = _rows_of_type(rows, "perp_open_interest_acceleration")
+    if not accel_rows:
+        return {"name": "oi_acceleration", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    best_row = None
+    best_score = 0.0
+
+    for row in accel_rows:
+        current_change_pct = _parse_summary_float(row.get("summary"), "current_change_pct", 0.0)
+        acceleration_pct = _parse_summary_float(row.get("summary"), "acceleration_pct", 0.0)
+        strength = abs(current_change_pct) + abs(acceleration_pct)
+
+        if strength > best_score:
+            best_score = strength
+            best_row = row
+
+    if not best_row:
+        return {"name": "oi_acceleration", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    current_change_pct = _parse_summary_float(best_row.get("summary"), "current_change_pct", 0.0)
+    acceleration_pct = _parse_summary_float(best_row.get("summary"), "acceleration_pct", 0.0)
+
+    if current_change_pct >= 0.75 and acceleration_pct >= 0.50:
+        bullish += min(0.18, 0.08 + (abs(acceleration_pct) / 10.0))
+        reasons.append("oi_accel_base")
+    elif current_change_pct <= -0.75 and acceleration_pct <= -0.50:
+        bearish += min(0.18, 0.08 + (abs(acceleration_pct) / 10.0))
+        reasons.append("oi_unwind_base")
+    elif current_change_pct > 0 and acceleration_pct <= -0.75:
+        bearish += 0.08
+        reasons.append("oi_build_fading")
+
+    return {"name": "oi_acceleration", "bullish": _scaled(bullish), "bearish": _scaled(bearish), "reasons": reasons}
+
+
+def _strategy_micro_trend(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    oi_change_rows = _rows_of_type(rows, "perp_open_interest_change")
+    if not oi_change_rows:
+        return {"name": "micro_trend", "bullish": 0.0, "bearish": 0.0, "reasons": []}
+
+    positive_moves = 0
+    negative_moves = 0
+
+    for row in oi_change_rows:
+        oi_change_pct = _parse_summary_float(row.get("summary"), "oi_change_pct", 0.0)
+
+        if oi_change_pct >= 0.75:
+            positive_moves += 1
+        elif oi_change_pct <= -0.75:
+            negative_moves += 1
+
+    if positive_moves > 0:
+        bullish += min(0.14, 0.06 + (positive_moves * 0.02))
+        reasons.append("oi_build_micro")
+
+    if negative_moves > 0:
+        bearish += min(0.14, 0.06 + (negative_moves * 0.02))
+        reasons.append("oi_unwind_micro")
+
+    return {"name": "micro_trend", "bullish": _scaled(bullish), "bearish": _scaled(bearish), "reasons": reasons}
+
+
+def _strategy_breakout_continuation(rows: List[Dict[str, Any]], types: Counter) -> Dict[str, Any]:
+    bullish = 0.0
+    bearish = 0.0
+    reasons: List[str] = []
+
+    if int(types.get("perp_trend_bullish", 0)) > 0 and int(types.get("perp_open_interest_build_accelerating", 0)) > 0:
+        bullish += 0.20
+        reasons.append("breakout_bull")
