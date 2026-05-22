@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "debug": true,
+  "loop_interval_sec": 5,
+
+  "snapshot_path": "/opt/toknclaw/data/snapshots/latest_snapshot_trading.json",
+  "snapshot_tmp_path": "/opt/toknclaw/data/snapshots/latest_snapshot_trading.tmp",
+
+  "persist_versioned_snapshots": false,
+  "versioned_snapshot_dir": "/opt/toknclaw/data/snapshots/trading_runs",
+
+  "translator_output_path": "/opt/toknclaw/data/narrative/trading_context.json",
+
+  "include_market_context": true,
+  "include_translator_payload": true,
+
+  "market_modules": [
+    {
+      "name": "funding_rates",
+      "enabled": true,
+      "module": "signal_engine.collectors.flows.funding_rates",
+      "functions": [
+        "fetch_funding_rate_signals",
+        "fetch_funding_rates",
+        "fetch_funding_signals"
+      ]
+    },
+    {
+      "name": "open_interest",
+      "enabled": true,
+      "module": "signal_engine.collectors.flows.open_interest",
+      "functions": [
+        "fetch_open_interest_signals"
+      ]
+    }
+  ],
+
+  "strategy_modules": [
+    {
+      "name": "funding_oi_strategy",
+      "enabled": true,
+      "adapter": "funding_oi_from_raw_signals"
+    },
+    {
+      "name": "oi_acceleration",
+      "enabled": true,
+      "module": "signal_engine.collectors.flows.open_interest_acceleration",
+      "functions": [
+        "fetch_open_interest_acceleration_signals"
+      ]
+    },
+    {
+      "name": "liquidation_engine",
+      "enabled": true,
+      "module": "signal_engine.collectors.flows.liquidation_engine",
+      "functions": [
+        "fetch_liquidation_stress_signals"
+      ]
+    },
+    {
+      "name": "price_oi_trend",
+      "enabled": true,
+      "module": "signal_engine.pipeline.price_oi_trend_engine",
+      "functions": [
+        "build_price_oi_trend"
+      ]
+    },
+    {
+      "name": "relative_strength_trend",
+      "enabled": true,
+      "module": "signal_engine.pipeline.relative_strength_trend_engine",
+      "functions": [
+        "build_relative_strength_trend"
+      ]
+    }
+  ],
+
+  "trade_signal_filters": {
+    "drop_neutral_rows": false,
+    "drop_non_tradable_entities": true
+  },
+
+  "agent_hooks": {
+    "enabled": true,
+    "configurable_fields": [
+      "loop_interval_sec",
+      "market_modules",
+      "strategy_modules",
+      "trade_signal_filters"
+    ],
+    "future_optimization_inputs": {
+      "paper_trading_state_path": "/opt/toknclaw/data/paper_trading_state.json",
+      "trading_snapshot_path": "/opt/toknclaw/data/snapshots/latest_snapshot_trading.json",
+      "backtesting_engine_module": "signal_engine.pipeline.backtesting_engine",
+      "strategy_performance_engine_module": "signal_engine.pipeline.strategy_performance_engine"
+    }
+  }
+}

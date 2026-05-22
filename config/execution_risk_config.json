@@ -1,0 +1,51 @@
+{
+  "enabled": true,
+  "live_trading_enabled": false,
+  "dry_run_enabled": true,
+
+  "max_single_order_usd": 250.0,
+  "max_total_open_exposure_usd": 1000.0,
+  "max_open_positions": 2,
+  "max_positions_per_entity": 1,
+
+  "max_daily_realized_loss_usd": 100.0,
+  "max_daily_trade_count": 20,
+
+  "allowed_venues": [
+    "hyperliquid"
+  ],
+
+  "allowed_entities": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "DOGE",
+    "LINK",
+    "AVAX",
+    "ARB",
+    "OP",
+    "INJ",
+    "PYTH",
+    "JUP",
+    "RNDR"
+  ],
+
+  "allowed_sides": [
+    "long",
+    "short"
+  ],
+
+  "minimum_confidence": 0.6,
+  "minimum_priority": "medium",
+
+  "block_live_orders_in_chop": true,
+  "require_regime_file": true,
+
+  "notes": {
+    "purpose": "Execution-time guardrail before any live exchange adapter can place an order.",
+    "live_trading_enabled": "Must be true before real orders are allowed.",
+    "dry_run_enabled": "Allows intent validation without placing live orders."
+  }
+}

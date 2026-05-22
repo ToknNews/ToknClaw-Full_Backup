@@ -1,0 +1,60 @@
+{
+  "enabled": true,
+  "default_mode": "observe_only",
+
+  "strategies": {
+    "trend_continuation": {
+      "mode": "allow",
+      "allowed_sides": [
+        "long",
+        "short"
+      ],
+      "minimum_rank_score": 0.35,
+      "allow_paper_candidates": true
+    },
+    "breakout_continuation": {
+      "mode": "allow",
+      "allowed_sides": [
+        "long"
+      ],
+      "minimum_rank_score": 0.35,
+      "allow_paper_candidates": true
+    },
+    "crowding_fade": {
+      "mode": "observe_only",
+      "reason": "Disabled as direct-entry strategy until performance improves."
+    },
+    "oi_acceleration": {
+      "mode": "observe_only",
+      "reason": "Use as confirmation only until sample improves."
+    },
+    "micro_trend": {
+      "mode": "observe_only",
+      "reason": "Use as supporting signal only."
+    },
+    "funding_baseline": {
+      "mode": "disabled",
+      "reason": "Funding alone should not create entries."
+    },
+    "discrete_rules": {
+      "mode": "disabled",
+      "reason": "Legacy direct-entry layer disabled."
+    },
+    "none": {
+      "mode": "disabled"
+    }
+  },
+
+  "paper_candidate_policy": {
+    "enabled": true,
+    "max_open_paper_candidate_positions": 1,
+    "minimum_rank_score": 0.35,
+    "require_market_quality": true,
+    "allow_only_if_asset_rotation_eligible": true
+  },
+
+  "live_candidate_policy": {
+    "enabled": false,
+    "reason": "Live trading remains disabled until SDK, credentials, risk gates, and post-patch edge are proven."
+  }
+}

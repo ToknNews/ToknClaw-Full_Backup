@@ -1,0 +1,38 @@
+{
+  "enabled": true,
+  "debug": true,
+  "max_insights": 25,
+  "max_media_view_items": 25,
+  "tracked_entities": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "DOGE",
+    "LINK",
+    "AVAX",
+    "ARB",
+    "OP",
+    "INJ",
+    "PYTH",
+    "JUP",
+    "RNDR"
+  ],
+  "min_commentary_confidence": 0.22,
+  "strong_signal_confidence": 0.55,
+  "short_sma_period": 20,
+  "long_sma_period": 200,
+  "overextension_pct_above_short_sma": 6.0,
+  "overextension_pct_below_short_sma": -6.0,
+  "emit_sma_commentary": true,
+  "emit_overextension_commentary": true,
+  "emit_position_summary": true,
+  "paths": {
+    "trading_snapshot": "/opt/toknclaw/data/snapshots/latest_snapshot_trading.json",
+    "paper_trading_state": "/opt/toknclaw/data/paper_trading_state.json",
+    "price_history": "/opt/toknclaw/data/token_price_history.json",
+    "commentary_output": "/opt/toknclaw/data/commentary/trading_commentary.json",
+    "media_view_staging_output": "/opt/toknclaw/data/commentary/media_view_staging.json"
+  }
+}

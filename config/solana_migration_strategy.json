@@ -1,0 +1,27 @@
+{
+  "enabled": true,
+  "lookback_minutes": 90,
+  "max_pairs_per_run": 200,
+  "migration_window_minutes": 45,
+  "dip_buy": {
+    "enabled": true,
+    "min_liquidity_events": 1,
+    "min_jupiter_swaps": 1,
+    "min_velocity_signals": 1,
+    "max_mev_signals": 8,
+    "confidence": 0.83
+  },
+  "breakout_follow": {
+    "enabled": true,
+    "min_jupiter_swaps": 2,
+    "min_velocity_signals": 1,
+    "max_mev_signals": 15,
+    "confidence": 0.79
+  },
+  "avoid_rules": {
+    "enabled": true,
+    "mev_spike_threshold": 20,
+    "thin_liquidity_threshold": 1,
+    "confidence": 0.84
+  }
+}

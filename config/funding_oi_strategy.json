@@ -1,0 +1,33 @@
+{
+  "enabled": true,
+  "debug": true,
+  "lookback_signal_count": 4000,
+  "tracked_entities": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "DOGE",
+    "LINK",
+    "AVAX",
+    "ARB",
+    "OP",
+    "INJ",
+    "PYTH",
+    "JUP",
+    "RNDR"
+  ],
+  "min_oi_rank_pct": 0.6,
+  "strong_oi_rank_pct": 0.8,
+  "long_crowding_threshold": 0.0004,
+  "short_crowding_threshold": -0.0004,
+  "divergence_threshold": 0.0003,
+  "max_strategy_signals": 50,
+  "max_broadcast_setups": 5,
+  "emit_broadcast_setup": true,
+  "require_tracked_entity": true,
+  "confidence_base": 0.72,
+  "confidence_bonus_divergence": 0.08,
+  "confidence_bonus_strong_oi": 0.07
+}

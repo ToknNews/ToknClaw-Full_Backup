@@ -1,0 +1,28 @@
+{
+  "enabled": true,
+  "debug": true,
+  "venue": "binance",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT",
+    "LINKUSDT",
+    "AVAXUSDT",
+    "ARBUSDT",
+    "OPUSDT",
+    "INJUSDT",
+    "PYTHUSDT",
+    "JUPUSDT",
+    "RNDRUSDT"
+  ],
+  "request_timeout_sec": 10,
+  "max_signals_per_run": 100,
+  "history_period": "5m",
+  "history_limit": 2,
+  "expansion_threshold_pct": 5.0,
+  "contraction_threshold_pct": -5.0,
+  "summary_top_n": 6
+}

@@ -1,0 +1,6 @@
+{
+  "enabled_collectors": [],
+  "disabled_collectors": [],
+  "max_signals_per_snapshot": 500,
+  "max_signals_per_entity": 10
+}

@@ -1,0 +1,30 @@
+{
+  "enabled": true,
+  "debug": true,
+  "tracked_entities": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "DOGE",
+    "LINK",
+    "AVAX",
+    "ARB",
+    "OP",
+    "INJ",
+    "PYTH",
+    "JUP",
+    "RNDR"
+  ],
+  "require_tracked_entity": true,
+  "min_history_points": 3,
+  "min_valid_oi": 0.0,
+  "build_threshold_pct": 0.7,
+  "unwind_threshold_pct": -1.5,
+  "acceleration_threshold_pct": 0.4,
+  "strong_acceleration_threshold_pct": 1.5,
+  "max_signals_per_run": 100,
+  "summary_top_n": 8,
+  "emit_base_acceleration_rows": true
+}

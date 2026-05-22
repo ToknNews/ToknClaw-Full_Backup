@@ -1,0 +1,26 @@
+{
+  "enabled": true,
+  "debug": true,
+
+  "request_timeout_sec": 8,
+  "max_assets_per_run": 25,
+
+  "depth_levels": 10,
+  "min_depth_usd_good": 250000,
+  "min_depth_usd_ok": 75000,
+
+  "max_spread_bps_good": 8,
+  "max_spread_bps_ok": 20,
+  "max_spread_bps_tradeable": 30,
+
+  "book_imbalance_good_abs": 0.12,
+
+  "include_open_positions": true,
+  "include_top_ranked_assets": true,
+  "include_trade_signal_assets": true,
+
+  "notes": {
+    "purpose": "Evaluate spread, depth, and book imbalance before allowing expanded-universe paper/live trading.",
+    "source": "Hyperliquid public info endpoint l2Book"
+  }
+}

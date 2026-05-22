@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "collectors": [
+
+    {
+      "id": "rss_news",
+      "module": "collectors.rss_news",
+      "function": "fetch_rss_signals",
+      "priority": 1,
+      "timeout_sec": 15,
+      "enabled": true,
+      "tags": ["news", "macro"]
+    },
+
+    {
+      "id": "defillama_protocols",
+      "module": "collectors.defillama_metrics",
+      "function": "fetch_defillama_signals",
+      "priority": 1,
+      "timeout_sec": 20,
+      "enabled": true,
+      "tags": ["defi", "protocol"]
+    },
+
+    {
+      "id": "tokenterminal_metrics",
+      "module": "collectors.tokenterminal_metrics",
+      "function": "fetch_tokenterminal_signals",
+      "priority": 1,
+      "timeout_sec": 20,
+      "enabled": true,
+      "tags": ["protocol", "fundamentals"]
+    },
+
+    {
+      "id": "chainstack_whales",
+      "module": "collectors.chainstack_whales",
+      "function": "fetch_eth_whales",
+      "priority": 1,
+      "timeout_sec": 20,
+      "enabled": true,
+      "tags": ["onchain", "whales"]
+    },
+
+    {
+      "id": "exchange_flows",
+      "module": "collectors.exchange_flows",
+      "function": "fetch_exchange_flows",
+      "priority": 2,
+      "timeout_sec": 20,
+      "enabled": true,
+      "tags": ["flows", "liquidity"]
+    },
+
+    {
+      "id": "defi_liquidations",
+      "module": "collectors.defi_liquidations",
+      "function": "fetch_defi_liquidations",
+      "priority": 2,
+      "timeout_sec": 20,
+      "enabled": true,
+      "tags": ["liquidations", "derivatives"]
+    },
+
+    {
+      "id": "reddit_sentiment",
+      "module": "collectors.reddit_sentiment",
+      "function": "fetch_reddit_signals",
+      "priority": 3,
+      "timeout_sec": 15,
+      "enabled": true,
+      "tags": ["culture", "retail"]
+    },
+
+    {
+      "id": "x_trending",
+      "module": "collectors.x_trending",
+      "function": "fetch_x_trending",
+      "priority": 3,
+      "timeout_sec": 15,
+      "enabled": true,
+      "tags": ["culture", "retail"]
+    },
+
+    {
+      "id": "memecoin_rotation",
+      "module": "collectors.memecoin_rotation",
+      "function": "fetch_memecoin_rotation",
+      "priority": 3,
+      "timeout_sec": 15,
+      "enabled": true,
+      "tags": ["culture", "memecoin"]
+    }
+
+  ]
+}

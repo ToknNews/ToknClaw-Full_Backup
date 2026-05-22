@@ -1,0 +1,25 @@
+{
+  "enabled": true,
+  "debug": true,
+
+  "checkpoint_path": "/opt/toknclaw/data/analytics/performance_checkpoint.json",
+
+  "post_exit_windows_minutes": [
+    15,
+    30,
+    60,
+    120
+  ],
+
+  "minimum_price_points_required": 5,
+
+  "max_closed_trades_to_analyze": 1000,
+
+  "exit_quality_thresholds": {
+    "missed_upside_usd": 1.0,
+    "saved_loss_usd": 1.0,
+    "bad_hold_extra_loss_usd": 1.0,
+    "mfe_large_usd": 2.0,
+    "mae_large_usd": 2.0
+  }
+}

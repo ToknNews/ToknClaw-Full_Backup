@@ -1,0 +1,9 @@
+{
+  "breakout_continuation": 2.0,
+  "crowding_fade": 0.0,
+  "discrete_rules": 0.0,
+  "funding_baseline": 0.0,
+  "micro_trend": 0.0292,
+  "oi_acceleration": 0.6,
+  "trend_continuation": 1.2
+}

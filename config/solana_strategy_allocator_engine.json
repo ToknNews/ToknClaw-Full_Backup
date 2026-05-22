@@ -1,0 +1,24 @@
+{
+  "enabled": true,
+  "debug": true,
+  "lookback_hours": 12,
+  "max_tokens_scored": 200,
+  "max_trade_decisions": 8,
+  "max_trade_candidates": 16,
+  "max_trade_avoids": 12,
+  "decision_score_threshold": 11.0,
+  "candidate_score_threshold": 6.0,
+  "avoid_score_threshold": -2.5,
+  "max_decisions_per_strategy_family": 3,
+  "use_adaptive_weights": true,
+  "adaptive_weight_default": 1.0,
+  "adaptive_weight_min": 0.25,
+  "adaptive_weight_max": 2.5,
+  "fallback_candidates_to_decisions_when_empty": true
+}
+
+{
+  "decision_score_threshold": 7.5,
+  "candidate_score_threshold": 4.5,
+  "avoid_score_threshold": -2.0
+}

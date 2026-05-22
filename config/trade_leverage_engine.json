@@ -1,0 +1,62 @@
+{
+  "enabled": true,
+  "debug": true,
+
+  "default_leverage": 1.0,
+  "baseline_unlocked_leverage": 1.2,
+  "max_leverage": 2.0,
+
+  "eligibility": {
+    "min_profit_factor": 1.20,
+    "min_closed_trades": 50,
+    "max_drawdown_pct": 3.00,
+    "healthy_only": true,
+    "allowed_health": ["healthy", "fragile_positive"]
+  },
+
+  "confidence_bands": [
+    { "min": 0.00, "max": 0.54, "leverage": 1.00 },
+    { "min": 0.55, "max": 0.69, "leverage": 1.25 },
+    { "min": 0.70, "max": 1.00, "leverage": 1.50 }
+  ],
+
+  "strategy_health_caps": {
+    "healthy": 1.50,
+    "fragile_positive": 1.25,
+    "neutral": 1.00,
+    "weak": 1.00,
+    "underperforming": 1.00,
+    "insufficient_sample": 1.00,
+    "unknown": 1.00
+  },
+
+  "regime_caps": {
+    "aligned": 1.50,
+    "neutral": 1.25,
+    "conflict": 1.00,
+    "unknown": 1.00
+  },
+
+  "exposure": {
+    "max_total_effective_exposure_pct_of_equity": 0.50,
+    "max_long_effective_exposure_pct_of_equity": 0.35,
+    "max_short_effective_exposure_pct_of_equity": 0.35
+  },
+
+  "openclaw_controls": {
+    "adjustable_fields": [
+      "baseline_unlocked_leverage",
+      "max_leverage",
+      "eligibility.min_profit_factor",
+      "eligibility.min_closed_trades",
+      "eligibility.max_drawdown_pct",
+      "confidence_bands",
+      "strategy_health_caps",
+      "regime_caps",
+      "exposure.max_total_effective_exposure_pct_of_equity",
+      "exposure.max_long_effective_exposure_pct_of_equity",
+      "exposure.max_short_effective_exposure_pct_of_equity"
+    ],
+    "mutation_policy": "config_only_with_approval"
+  }
+}

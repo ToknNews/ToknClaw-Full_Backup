@@ -1,0 +1,35 @@
+{
+  "enabled": true,
+  "ws_url": "",
+  "reconnect_delay_sec": 5,
+  "max_signature_cache": 5000,
+  "subscriptions": [
+    {
+      "name": "jupiter",
+      "program_id": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+      "signal_type": "solana_jupiter_stream_event",
+      "title": "Streaming Jupiter activity detected",
+      "confidence": 0.82,
+      "sentiment_score": 0.15,
+      "entity": "SOLANA"
+    },
+    {
+      "name": "raydium",
+      "program_id": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+      "signal_type": "solana_raydium_stream_event",
+      "title": "Streaming Raydium activity detected",
+      "confidence": 0.83,
+      "sentiment_score": 0.18,
+      "entity": "SOLANA"
+    },
+    {
+      "name": "pumpfun",
+      "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "signal_type": "solana_pumpfun_stream_event",
+      "title": "Streaming Pump.fun activity detected",
+      "confidence": 0.86,
+      "sentiment_score": 0.22,
+      "entity": "SOLANA"
+    }
+  ]
+}

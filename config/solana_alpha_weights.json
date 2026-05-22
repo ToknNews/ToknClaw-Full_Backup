@@ -1,0 +1,17 @@
+{
+  "weights": {
+    "solana_token_mint": 1.5,
+    "solana_pumpfun_activity": 2.0,
+    "solana_raydium_pool_init": 2.5,
+    "solana_liquidity_event": 1.8,
+    "solana_jupiter_swap": 1.2,
+    "solana_volume_velocity": 2.3,
+    "solana_mev_activity": 1.0,
+    "solana_liquidity_depth": 0.7,
+    "solana_dev_wallet_sale": -3.0,
+    "solana_holder_concentration_alert": -1.5
+  },
+
+  "entry_threshold": 4.0,
+  "exit_threshold": -2.5
+}

@@ -1,0 +1,24 @@
+{
+  "enabled": true,
+  "debug": true,
+  "lookback_minutes_fast": 60,
+  "lookback_minutes_slow": 240,
+  "lookback_minutes_day": 1440,
+  "min_fast_move_pct": 0.5,
+  "min_slow_move_pct": 0.5,
+  "min_relative_rank_pct": 0.7,
+  "continuation_window_minutes": 30,
+  "max_bullish_pullback_from_high_pct": 0.35,
+  "min_bullish_position_from_low_pct": 0.15,
+  "max_long_funding_rate": 0.00015,
+  "max_short_funding_rate": 0.00015,
+  "max_outputs": 6,
+  "min_confidence": 0.62,
+  "max_confidence": 0.9,
+  "emit_bearish": true,
+  "emit_bullish": true,
+  "notes": {
+    "purpose": "Detect higher-timeframe relative strength and weakness across Hyperliquid-tradable assets.",
+    "behavior": "Outputs perp_trend_bullish/perp_trend_bearish so existing trend_continuation scoring can consume it."
+  }
+}

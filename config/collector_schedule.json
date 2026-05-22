@@ -1,0 +1,18 @@
+{
+  "default_interval_sec": 300,
+  "collectors": {
+    "fetch_solana_mev_signals": 15,
+    "fetch_solana_jupiter_swap_signals": 20,
+    "fetch_solana_raydium_pool_signals": 30,
+    "fetch_solana_volume_velocity_signals": 30,
+    "fetch_solana_pumpfun_signals": 30,
+
+    "fetch_coingecko_market_signals": 120,
+    "fetch_stablecoin_liquidity_signals": 180,
+    "fetch_defillama_signals": 300,
+
+    "fetch_rss_signals": 300,
+    "fetch_rss_news_signals": 300,
+    "fetch_reddit_signals": 600
+  }
+}

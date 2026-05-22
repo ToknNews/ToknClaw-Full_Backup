@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "debug": true,
+  "lookback_hours": 12,
+  "recent_window_minutes": 30,
+  "baseline_window_minutes": 180,
+  "max_tokens_scored": 120,
+  "max_entry_signals": 6,
+  "max_watch_signals": 8,
+  "max_avoid_signals": 10,
+  "entry_threshold": 11.5,
+  "watch_threshold": 6.5,
+  "avoid_threshold": -1.5,
+  "min_recent_activity_score_for_entry": 6.0,
+  "min_recent_activity_score_for_watch": 3.0,
+  "min_acceleration_ratio_for_entry": 2.0,
+  "min_acceleration_ratio_for_watch": 1.25,
+  "require_liquidity_support_for_entry": true,
+  "require_velocity_support_for_entry": true,
+  "max_thin_liquidity_alerts_for_entry": 0
+}

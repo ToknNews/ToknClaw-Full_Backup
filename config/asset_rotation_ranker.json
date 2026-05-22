@@ -1,0 +1,30 @@
+{
+  "enabled": true,
+  "debug": true,
+  "lookback_minutes": 30,
+  "max_ranked_assets": 184,
+  "weights": {
+    "price_momentum": 0.45,
+    "near_high": 0.15,
+    "trade_signal": 0.2,
+    "universe_tier": 0.05,
+    "market_quality": 0.15
+  },
+  "tier_scores": {
+    "majors": 1.0,
+    "midcaps": 0.85,
+    "paper_candidates": 0.65,
+    "unknown": 0.35
+  },
+  "minimum_paper_candidate_30m_change_pct": 1.25,
+  "minimum_live_candidate_30m_change_pct": 0.35,
+  "maximum_pullback_from_high_pct": 0.5,
+  "rotation": {
+    "enabled": true,
+    "minimum_rank_improvement": 0.25,
+    "minimum_unrealized_pnl_to_replace": -1.0,
+    "protect_profitable_positions": true
+  },
+  "preferred_paper_candidate_30m_change_pct": 2.5,
+  "minimum_rank_score_to_trade": 0.35
+}

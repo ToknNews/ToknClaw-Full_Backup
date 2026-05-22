@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "debug": true,
+  "min_weight": 0.25,
+  "max_weight": 2.5,
+  "neutral_weight": 1.0,
+  "min_trades_required": 5,
+  "boost_threshold_expectancy": 1.0,
+  "penalty_threshold_expectancy": -1.0,
+  "win_rate_boost_threshold": 0.6,
+  "win_rate_penalty_threshold": 0.4,
+  "max_alerts": 25
+}

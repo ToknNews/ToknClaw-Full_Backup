@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "debug": true,
+  "tracked_entities": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "DOGE",
+    "LINK",
+    "AVAX",
+    "ARB",
+    "OP",
+    "INJ",
+    "PYTH",
+    "JUP",
+    "RNDR"
+  ],
+  "short_sma_period": 20,
+  "long_sma_period": 200,
+  "max_entities": 50,
+  "max_hooks": 50,
+  "paths": {
+    "trading_snapshot": "/opt/toknclaw/data/snapshots/latest_snapshot_trading.json",
+    "paper_trading_state": "/opt/toknclaw/data/paper_trading_state.json",
+    "price_history": "/opt/toknclaw/data/token_price_history.json",
+    "narrative_output": "/opt/toknclaw/data/commentary/narrative_intelligence.json",
+    "media_view_staging_output": "/opt/toknclaw/data/commentary/media_view_staging.json"
+  }
+}

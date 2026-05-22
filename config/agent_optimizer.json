@@ -1,0 +1,43 @@
+{
+  "enabled": true,
+  "debug": true,
+  "mode": "recommend_only",
+  "lookback": {
+    "max_closed_positions": 200,
+    "max_days": 14
+  },
+  "minimum_sample_sizes": {
+    "per_reason": 8,
+    "per_entity": 8,
+    "per_direction": 10
+  },
+  "change_limits": {
+    "max_weight_step": 0.05,
+    "max_threshold_step": 0.03,
+    "max_size_step_pct": 0.15
+  },
+  "promotion_policy": {
+    "enabled": true,
+    "minimum_paper_trades": 20,
+    "minimum_win_rate": 0.52,
+    "minimum_expectancy_usd": 0.0,
+    "max_drawdown_pct": 8.0
+  },
+  "allowed_patch_targets": [
+    "/opt/toknclaw/config/paper_trading_engine.json",
+    "/opt/toknclaw/config/trading_runner.json",
+    "/opt/toknclaw/config/trading_universe.json"
+  ],
+  "agent_hooks": {
+    "allow_apply_changes": false,
+    "require_report_output": true
+  },
+  "paths": {
+    "paper_trading_state": "/opt/toknclaw/data/paper_trading_state.json",
+    "trading_snapshot": "/opt/toknclaw/data/snapshots/latest_snapshot_trading.json",
+    "report_json": "/opt/toknclaw/data/optimizer/latest_optimizer_report.json",
+    "report_md": "/opt/toknclaw/data/optimizer/latest_optimizer_report.md",
+    "recommendations_json": "/opt/toknclaw/data/optimizer/latest_optimizer_recommendations.json",
+    "history_dir": "/opt/toknclaw/data/optimizer/optimizer_history"
+  }
+}

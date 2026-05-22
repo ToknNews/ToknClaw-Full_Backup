@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "manual_kill_switch": true,
+  "reason": "live trading disabled until final operator approval",
+  "updated_by": "operator",
+  "notes": {
+    "manual_kill_switch": "When true, execution_risk_gate rejects all live-order decisions.",
+    "live_go_live_step": "Set manual_kill_switch=false only after dry-run decisions are clean."
+  }
+}

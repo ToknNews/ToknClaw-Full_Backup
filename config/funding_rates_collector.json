@@ -1,0 +1,27 @@
+{
+  "enabled": true,
+  "debug": true,
+  "venue": "binance",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT",
+    "LINKUSDT",
+    "AVAXUSDT",
+    "ARBUSDT",
+    "OPUSDT",
+    "INJUSDT",
+    "PYTHUSDT",
+    "JUPUSDT",
+    "RNDRUSDT"
+  ],
+  "request_timeout_sec": 10,
+  "max_signals_per_run": 100,
+  "long_crowding_threshold": 0.0005,
+  "short_crowding_threshold": -0.0005,
+  "summary_top_n": 6,
+  "emit_neutral_rate_rows": true
+}

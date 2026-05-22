@@ -1,0 +1,47 @@
+{
+  "btc": {"symbol": "BTC", "name": "Bitcoin", "chain": "bitcoin", "type": "major"},
+  "eth": {"symbol": "ETH", "name": "Ethereum", "chain": "ethereum", "type": "major"},
+  "sol": {"symbol": "SOL", "name": "Solana", "chain": "solana", "type": "major"},
+  "bnb": {"symbol": "BNB", "name": "BNB", "chain": "bsc", "type": "major"},
+  "xrp": {"symbol": "XRP", "name": "XRP", "chain": "ripple", "type": "major"},
+  "doge": {"symbol": "DOGE", "name": "Dogecoin", "chain": "dogecoin", "type": "major"},
+
+  "arb": {"symbol": "ARB", "name": "Arbitrum", "chain": "ethereum", "type": "l2"},
+  "op": {"symbol": "OP", "name": "Optimism", "chain": "ethereum", "type": "l2"},
+  "matic": {"symbol": "MATIC", "name": "Polygon", "chain": "ethereum", "type": "l2"},
+  "base": {"symbol": "BASE", "name": "Base Ecosystem", "chain": "ethereum", "type": "l2"},
+
+  "avax": {"symbol": "AVAX", "name": "Avalanche", "chain": "avalanche", "type": "alt"},
+  "atom": {"symbol": "ATOM", "name": "Cosmos", "chain": "cosmos", "type": "alt"},
+  "inj": {"symbol": "INJ", "name": "Injective", "chain": "cosmos", "type": "alt"},
+  "near": {"symbol": "NEAR", "name": "NEAR Protocol", "chain": "near", "type": "alt"},
+  "apt": {"symbol": "APT", "name": "Aptos", "chain": "aptos", "type": "alt"},
+  "sui": {"symbol": "SUI", "name": "Sui", "chain": "sui", "type": "alt"},
+
+  "link": {"symbol": "LINK", "name": "Chainlink", "chain": "ethereum", "type": "oracle"},
+  "pyth": {"symbol": "PYTH", "name": "Pyth Network", "chain": "solana", "type": "oracle"},
+
+  "uni": {"symbol": "UNI", "name": "Uniswap", "chain": "ethereum", "type": "defi"},
+  "aave": {"symbol": "AAVE", "name": "Aave", "chain": "ethereum", "type": "defi"},
+  "comp": {"symbol": "COMP", "name": "Compound", "chain": "ethereum", "type": "defi"},
+  "crv": {"symbol": "CRV", "name": "Curve", "chain": "ethereum", "type": "defi"},
+  "snx": {"symbol": "SNX", "name": "Synthetix", "chain": "ethereum", "type": "defi"},
+  "rdnt": {"symbol": "RDNT", "name": "Radiant Capital", "chain": "arbitrum", "type": "defi"},
+
+  "jup": {"symbol": "JUP", "name": "Jupiter", "chain": "solana", "type": "defi"},
+  "orca": {"symbol": "ORCA", "name": "Orca", "chain": "solana", "type": "defi"},
+  "ray": {"symbol": "RAY", "name": "Raydium", "chain": "solana", "type": "defi"},
+
+  "bonk": {"symbol": "BONK", "name": "Bonk", "chain": "solana", "type": "memecoin"},
+  "wif": {"symbol": "WIF", "name": "dogwifhat", "chain": "solana", "type": "memecoin"},
+  "pepe": {"symbol": "PEPE", "name": "Pepe", "chain": "ethereum", "type": "memecoin"},
+  "floki": {"symbol": "FLOKI", "name": "Floki", "chain": "ethereum", "type": "memecoin"},
+  "shib": {"symbol": "SHIB", "name": "Shiba Inu", "chain": "ethereum", "type": "memecoin"},
+
+  "sol:6gWygYZ4byuy8GqfbBBRKnbAJsNAM1PWPXznuQdLpump": {
+    "symbol": "UNKNOWN",
+    "name": "Unknown Pump Token",
+    "chain": "solana",
+    "type": "memecoin"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "enabled": true,
+  "lookback_signal_count": 3000,
+  "max_tokens_to_score": 200,
+  "top_n_tokens": 12,
+  "max_signals_per_run": 40,
+  "min_score_to_emit": 2.0,
+  "emit_memecoin_of_the_day": true,
+  "emit_bitsy_watchlist": true,
+  "emit_name_theme_summary": true,
+  "funny_name_bonus": 1.25,
+  "weights": {
+    "solana_pumpfun_launch": 3.0,
+    "solana_pumpfun_activity": 1.0,
+    "solana_jupiter_swap": 1.1,
+    "solana_raydium_pool_init": 2.2,
+    "solana_liquidity_event": 1.6,
+    "solana_volume_velocity": 2.5,
+    "solana_funny_name_candidate": 1.0,
+    "solana_token_name_theme": 0.8,
+    "solana_liquidity_depth": 0.6
+  },
+  "theme_keywords": {
+    "ai": ["ai", "agent", "gpt", "bot", "neural", "brain", "quant"],
+    "dog": ["dog", "inu", "shib", "bonk", "woof"],
+    "cat": ["cat", "kitty", "meow"],
+    "frog": ["pepe", "frog", "ribbit"],
+    "politics": ["trump", "maga", "elon", "biden", "rfk", "vote"],
+    "money": ["cash", "moon", "lambo", "rich", "bank", "pump"],
+    "absurd": ["butt", "fart", "toilet", "grandma", "hamster", "chad"]
+  }
+}

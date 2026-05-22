@@ -1,0 +1,62 @@
+{
+  "enabled": true,
+  "debug": true,
+
+  "base_risk_pct_of_equity": 0.02,
+  "min_position_pct_of_equity": 0.005,
+  "max_position_pct_of_equity": 0.07,
+  "max_total_exposure_pct_of_equity": 0.35,
+
+  "max_long_exposure_pct_of_equity": 0.25,
+  "max_short_exposure_pct_of_equity": 0.25,
+
+  "confidence_bands": [
+    { "min": 0.00, "max": 0.39, "multiplier": 0.75 },
+    { "min": 0.40, "max": 0.54, "multiplier": 1.00 },
+    { "min": 0.55, "max": 0.69, "multiplier": 1.35 },
+    { "min": 0.70, "max": 1.00, "multiplier": 1.75 }
+  ],
+
+  "strategy_health_multipliers": {
+    "healthy": 1.10,
+    "fragile_positive": 1.00,
+    "neutral": 0.95,
+    "weak": 0.75,
+    "underperforming": 0.50,
+    "insufficient_sample": 0.85,
+    "unknown": 0.90
+  },
+
+  "regime_multipliers": {
+    "aligned": 1.10,
+    "neutral": 1.00,
+    "conflict": 0.70,
+    "unknown": 1.00
+  },
+
+  "drawdown_bands": [
+    { "min": 0.00, "max": 1.99, "multiplier": 1.00 },
+    { "min": 2.00, "max": 4.99, "multiplier": 0.80 },
+    { "min": 5.00, "max": 100.0, "multiplier": 0.60 }
+  ],
+
+  "volatility_bands": [
+    { "max_abs_price_change_pct": 0.25, "multiplier": 1.10 },
+    { "max_abs_price_change_pct": 1.00, "multiplier": 1.00 },
+    { "max_abs_price_change_pct": 100.0, "multiplier": 0.75 }
+  ],
+
+  "leverage": {
+    "enabled": true,
+    "default": 1.0,
+    "max_allowed": 2.0,
+    "min_profit_factor": 1.20,
+    "min_closed_trades": 50,
+    "max_drawdown_pct": 3.0,
+    "healthy_only": true,
+    "approved_multipliers": [
+      { "min_confidence": 0.55, "leverage": 1.25 },
+      { "min_confidence": 0.70, "leverage": 1.50 }
+    ]
+  }
+}

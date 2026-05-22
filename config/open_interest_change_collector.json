@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "debug": true,
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT",
+    "LINKUSDT",
+    "AVAXUSDT",
+    "ARBUSDT",
+    "OPUSDT",
+    "INJUSDT",
+    "PYTHUSDT",
+    "JUPUSDT",
+    "RNDRUSDT"
+  ],
+  "timeout": 10,
+  "history_points_per_symbol": 120,
+  "comparison_lookback_points": 5,
+  "min_valid_oi": 0.0,
+  "rising_threshold_pct": 1.5,
+  "falling_threshold_pct": -1.5,
+  "strong_rising_threshold_pct": 4.0,
+  "strong_falling_threshold_pct": -4.0,
+  "max_signals_per_run": 100,
+  "summary_top_n": 8,
+  "emit_neutral_change_rows": true
+}
