@@ -2,11 +2,13 @@
 
 from dataclasses import dataclass
 import hashlib
+import json
 import re
 import time
 from urllib.parse import urlparse, urlunparse
 
 from .http import RemoteError
+from .presentation import validate_presentation
 
 
 @dataclass(frozen=True, repr=False)
@@ -48,14 +50,20 @@ def routes_from_env(env):
     return routes
 
 
-def send(route, text, client):
+def send(route, text, client, presentation=None):
     # One message per event keeps retries unambiguous. Never truncate paid evidence.
-    if len(text) > (1900 if route.platform == 'discord' else 3900):
+    if len(text.encode('utf-16-le')) // 2 > (6000 if route.platform == 'discord' and presentation else 1900 if route.platform == 'discord' else 3900):
         raise RemoteError('message_too_long')
     if route.platform == 'discord':
-        response = client.call(route.endpoint + '?wait=true', {
-            'content': text, 'allowed_mentions': {'parse': []},
-        })
+        payload = {'allowed_mentions': {'parse': []}}
+        if presentation is None:
+            payload['content'] = text
+        else:
+            try:
+                payload['embeds'] = [validate_presentation(presentation)]
+            except (ValueError, TypeError, KeyError, OverflowError):
+                raise RemoteError('invalid_presentation') from None
+        response = client.call(route.endpoint + '?wait=true', payload)
         if not isinstance(response, dict) or not response.get('id'):
             raise RemoteError('missing_delivery_receipt', ambiguous=True)
         return str(response['id'])
@@ -94,7 +102,11 @@ def dispatch(store, routes, client, clock=time.time):
             continue
         store.delivery_state(row['id'], 'sending', now)
         try:
-            receipt = send(route, row['text'], client)
+            try:
+                presentation = json.loads(row['evidence']).get('presentation')
+            except (ValueError, TypeError, AttributeError):
+                raise RemoteError('invalid_archived_presentation') from None
+            receipt = send(route, row['text'], client, presentation)
             store.delivery_state(row['id'], 'sent', clock(), remote_id=receipt)
             totals['sent'] += 1
         except RemoteError as exc:

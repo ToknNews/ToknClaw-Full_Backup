@@ -107,7 +107,7 @@ class Store:
             self.db.execute("UPDATE deliveries SET status='unknown',error='interrupted_send',updated_at=? WHERE status='sending'", (now,))
             self.db.execute("""UPDATE deliveries SET status='expired',error='message_expired',updated_at=?
                 WHERE status='pending' AND event_id IN (SELECT id FROM events WHERE expires_at<=?)""", (now, now))
-        return self.db.execute("""SELECT d.*, e.text, e.audience, e.expires_at FROM deliveries d
+        return self.db.execute("""SELECT d.*, e.text, e.audience, e.expires_at, e.evidence FROM deliveries d
             JOIN events e ON d.event_id=e.id WHERE d.status='pending' AND d.next_attempt<=?
             ORDER BY d.id LIMIT 20""", (now,)).fetchall()
 

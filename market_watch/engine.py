@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from .models import Event
+from .presentation import alert_card, brief_card, health_card
 
 
 def stamp(now):
@@ -19,6 +20,19 @@ def deadline(config, observations, now):
 
 def change(current, previous):
     return (current / previous - 1) * 100
+
+
+def comparisons_for(config, store, observations):
+    comparisons = []
+    for obs in observations:
+        base = store.baseline(obs, config.lookback_minutes * 60, config.baseline_tolerance_seconds)
+        if base:
+            comparisons.append({
+                'venue': obs.venue, 'baseline': base.to_dict(),
+                'price_pct': change(obs.mark_price, base.mark_price),
+                'oi_base_pct': change(obs.oi_base, base.oi_base),
+            })
+    return comparisons
 
 
 def assess(config, observations, errors, now):
@@ -57,52 +71,33 @@ def market_alerts(config, store, observations, now):
             continue
         funding = [o.funding_bps_8h for o in group]
         candidates = []
-        comparisons = []
-        for obs in group:
-            base = store.baseline(obs, config.lookback_minutes * 60, config.baseline_tolerance_seconds)
-            if base:
-                comparisons.append({
-                    'venue': obs.venue, 'baseline': base.to_dict(),
-                    'price_pct': change(obs.mark_price, base.mark_price),
-                    'oi_base_pct': change(obs.oi_base, base.oi_base),
-                })
+        comparisons = comparisons_for(config, store, group)
         if len(comparisons) >= config.minimum_venues:
             prices = [r['price_pct'] for r in comparisons]
             oi = [r['oi_base_pct'] for r in comparisons]
             if all(x >= config.oi_change_pct for x in oi):
                 if all(x >= config.price_change_pct for x in prices):
-                    candidates.append(('price_oi_up', 'Price and open interest rising',
-                        'Rising positioning accompanies the price move. This does not identify whether new positions are longs or shorts.'))
+                    candidates.append('price_oi_up')
                 elif all(x <= -config.price_change_pct for x in prices):
-                    candidates.append(('price_oi_down', 'Price falling; open interest rising',
-                        'Positioning expanded during a price decline. This does not establish that the decline will continue.'))
+                    candidates.append('price_oi_down')
         if all(x >= config.funding_extreme_bps_8h for x in funding):
-            candidates.append(('positive_funding', 'Elevated positive funding',
-                'Longs currently pay shorts on these venues. Positive funding alone does not establish a reversal.'))
+            candidates.append('positive_funding')
         elif all(x <= -config.funding_extreme_bps_8h for x in funding):
-            candidates.append(('negative_funding', 'Elevated negative funding',
-                'Shorts currently pay longs on these venues. Negative funding alone does not establish a rebound.'))
+            candidates.append('negative_funding')
         if len(group) >= 2 and max(funding) - min(funding) >= config.funding_spread_bps_8h:
-            candidates.append(('funding_divergence', 'Funding differs across venues',
-                'Rates differ on a common time basis. Fees, basis risk and changing rates may outweigh this difference.'))
-        for rule, title, interpretation in candidates:
+            candidates.append('funding_divergence')
+        for rule in candidates:
             key = config.rule_version + ':' + asset + ':' + rule
             last = store.last_event(key)
             if last is not None and now - last < config.cooldown_minutes * 60:
                 continue
             if store.alert_count(now - 3600) + len(events) >= config.max_alerts_per_hour:
                 return events
-            lines = ['TOKN MARKET WATCH | ' + asset, title, stamp(now)]
-            for obs in group:
-                lines.append(f'{obs.venue}: mark {obs.mark_price:,.2f} {obs.quote_currency}; OI ${obs.oi_usd / 1e6:,.1f}m; funding {obs.funding_bps_8h:+.2f} bps/8h equiv. As of {stamp(obs.observed_at)}.')
-            if comparisons:
-                for row in comparisons:
-                    lines.append(f"{row['venue']} ~{config.lookback_minutes}m: price {row['price_pct']:+.2f}%; OI in coin units {row['oi_base_pct']:+.2f}%.")
-            lines += [interpretation, 'Source: current public venue estimates; funding can change.',
-                      'Monitoring only. No entry, leverage or return recommendation.']
-            evidence = {'rule': rule, 'config': asdict(config), 'observations': [o.to_dict() for o in group], 'comparisons': comparisons}
+            text, presentation = alert_card(config, rule, asset, group, comparisons, now)
+            evidence = {'rule': rule, 'config': asdict(config), 'observations': [o.to_dict() for o in group],
+                        'comparisons': comparisons, 'presentation': presentation}
             events.append(Event(key, 'alert', 'paid', now, deadline(config, group, now),
-                                '\n'.join(lines), evidence))
+                                text, evidence))
     return events
 
 
@@ -119,24 +114,14 @@ def summaries(config, store, observations, issues, now):
         if store.last_event(key) is not None:
             continue
         covered = config.assets if audience == 'paid' else config.assets[:1]
-        lines = ['TOKN MARKET WATCH | ' + ('Market brief' if audience == 'paid' else 'Free market sample'), stamp(now)]
-        for asset in covered:
-            group = [o for o in observations if o.asset == asset]
-            if len(group) < config.minimum_venues:
-                lines.append(asset + ': insufficient fresh venue coverage; analysis paused.')
-                continue
-            lines.append(asset + ':')
-            for obs in sorted(group, key=lambda o: o.venue):
-                lines.append(f'  {obs.venue}: {obs.mark_price:,.2f} {obs.quote_currency}; OI ${obs.oi_usd / 1e6:,.1f}m; funding {obs.funding_bps_8h:+.2f} bps/8h equiv. As of {stamp(obs.observed_at)}.')
-        if issues:
-            lines.append('Coverage degraded: some measurements are unavailable or inconsistent.')
-        lines += ['Funding shown on a common 8h basis; estimates can change.',
-                  'Monitoring only. No trade or return recommendation.']
-        if audience == 'free':
-            lines.append('Sample coverage: ' + ', '.join(covered) + '. Full feed covers BTC, ETH and SOL.')
-        evidence = {'observations': [o.to_dict() for o in observations if o.asset in covered], 'issues': issues, 'timezone': config.timezone}
         visible = [o for o in observations if o.asset in covered]
-        events.append(Event(key, 'summary', audience, now, deadline(config, visible, now), '\n'.join(lines), evidence))
+        visible_issues = {key: value for key, value in issues.items()
+                          if ':' not in key or key.rsplit(':', 1)[-1] in covered}
+        comparisons = {asset: comparisons_for(config, store, [o for o in visible if o.asset == asset]) for asset in covered}
+        text, presentation = brief_card(config, audience, covered, visible, comparisons, visible_issues, now)
+        evidence = {'observations': [o.to_dict() for o in visible], 'issues': visible_issues,
+                    'timezone': config.timezone, 'comparisons': comparisons, 'presentation': presentation}
+        events.append(Event(key, 'summary', audience, now, deadline(config, visible, now), text, evidence))
     return events
 
 
@@ -150,9 +135,6 @@ def health_event(config, store, issues, now):
     last = store.last_event(key)
     if last is not None and now - last < 900:
         return []
-    text = 'TOKN MARKET WATCH | Data health\n' + stamp(now) + '\n'
-    if current:
-        text += 'Coverage degraded. Affected comparisons are paused.\n' + '\n'.join(f'{k}: {v}' for k, v in current.items())
-    else:
-        text += 'Configured venue coverage has recovered. Fresh measurements are available.'
-    return [Event(key, 'health', 'paid', now, now + config.delivery_ttl_seconds, text, {'issues': current})]
+    text, presentation = health_card(config, current, now)
+    return [Event(key, 'health', 'paid', now, now + config.delivery_ttl_seconds, text,
+                  {'issues': current, 'presentation': presentation})]

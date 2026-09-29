@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tokn Market Watch · Message design</title><style>
+*{box-sizing:border-box}body{margin:0;background:#101316;color:#edf0f5;font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.page{max-width:1240px;margin:auto;padding:42px 28px}.eyebrow{color:#38bdf8;font-size:11px;letter-spacing:3px;font-weight:750}
+h1{font-size:38px;line-height:1.15;letter-spacing:-1.4px;margin:12px 0}.intro{color:#aab3bf;max-width:770px;margin:0 0 20px}
+.notice{display:inline-block;border:1px solid #665225;background:#302919;color:#f8d177;border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700}
+.toolbar{display:flex;gap:12px;align-items:center;margin:26px 0;color:#aab3bf}select{background:#242932;border:1px solid #3c4350;color:#edf0f5;padding:10px 14px;border-radius:8px;font:inherit}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:26px}.message{min-width:0}.byline{display:flex;align-items:center;gap:9px;margin-bottom:10px;font-size:13px}
+.avatar{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:#38bdf8;color:#071c27;font-size:18px;font-weight:850}
+.app{font-size:10px;background:#5865f2;border-radius:3px;color:white;padding:0 4px;font-weight:700}.demo{color:#77828f;font-size:10px;letter-spacing:1px}
+.card{background:#20252c;border:1px solid #303741;border-left:4px solid var(--accent);padding:22px 23px;border-radius:4px 10px 10px 4px;min-width:0}
+.brand{font-size:10px;letter-spacing:2px;color:#b3bdca;font-weight:750}h2{font-size:20px;line-height:1.3;margin:10px 0;color:#fff;letter-spacing:-.3px}
+.description{color:#adb8c7;font-size:12px;margin:0;white-space:pre-line}.field{margin-top:19px}.field h3{font-size:13px;margin:0 0 5px;color:#f4f6f8;font-weight:750}
+.field p{white-space:pre-line;margin:0;color:#d0d7e1;font-size:13px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+footer{border-top:1px solid #343b45;margin-top:20px;padding-top:12px;color:#909cab;font-size:10px;line-height:1.5}.fine{margin-top:30px;color:#7d8896;font-size:12px}
+[hidden]{display:none!important}@media(max-width:760px){.page{padding:26px 16px}h1{font-size:30px}.grid{grid-template-columns:1fr}.card{padding:18px 16px}.toolbar{flex-wrap:wrap}.field p{font-size:12px}}
+</style></head><body><main class="page"><div class="eyebrow">TOKN / MARKET WATCH</div>
+<h1>Read the market. Skip the noise.</h1><p class="intro">A compact message system for positioning alerts, market briefs and source-health updates. Discord uses native cards; Telegram gets the same information as plain text.</p>
+<div class="notice">DESIGN PREVIEW · ALL MARKET VALUES ARE FICTIONAL</div>
+<div class="toolbar"><label for="kind">Preview a message</label><select id="kind"><option value="all">All formats</option><option value="price_oi_up">Price Oi Up</option><option value="price_oi_down">Price Oi Down</option><option value="positive_funding">Positive Funding</option><option value="negative_funding">Negative Funding</option><option value="funding_divergence">Funding Divergence</option><option value="am_brief">Am Brief</option><option value="free_look">Free Look</option><option value="data_limited">Data Limited</option><option value="data_restored">Data Restored</option></select></div>
+<div class="grid"><article class="message" data-kind="price_oi_up"><div class="byline"><span class="avatar">T</span><strong>Tokn Market Watch</strong><span class="app">APP</span><span class="demo">DEMO</span></div><div class="card" style="--accent:#38bdf8"><div class="brand">TOKN / MARKET WATCH</div><h2>DEMO · BTC · PRICE ↑ / OI ↑</h2><p class="description">Price up. Positioning up.
+~15m window · 2/2 fresh venues
+Sep 29, 2026 · 08:00 AM EDT</p><section class="field"><h3>Hyperliquid</h3><p>Mark 64,820.00 USD
+~15m · Price +1.28% · OI +4.60%
+OI notional $12.40B · Funding +0.0120% / 8h eq.
+Received 09-29 11:59:56 UTC</p></section><section class="field"><h3>OKX</h3><p>Mark 64,802.00 USDT
+~15m · Price +1.28% · OI +4.60%
+OI notional $5.10B · Funding +0.0180% / 8h eq.
+As of 09-29 11:59:56 UTC</p></section><section class="field"><h3>The read</h3><p>Open interest is expanding alongside price. This does not identify whether new positions are longs or shorts.</p></section><section class="field"><h3>Watch next</h3><p>Watch whether price and open interest keep rising together.</p></section><footer>OI changes use coin units. Funding: 8h equivalent estimates. Market monitoring only.</footer></div></article><article class="message" data-kind="price_oi_down"><div class="byline"><span class="avatar">T</span><strong>Tokn Market Watch</strong><span class="app">APP</span><span class="demo">DEMO</span></div><div class="card" style="--accent:#fb7185"><div class="brand">TOKN / MARKET WATCH</div><h2>DEMO · BTC · PRICE ↓ / OI ↑</h2><p class="description">Price down. Positioning up.
+~15m window · 2/2 fresh venues
+Sep 29, 2026 · 08:00 AM EDT</p><section class="field"><h3>Hyperliquid</h3><p>Mark 63,523.60 USD
+~15m · Price -1.02% · OI +4.60%
+OI notional $12.15B · Funding +0.0120% / 8h eq.
+Received 09-29 11:59:56 UTC</p></section><section class="field"><h3>OKX</h3><p>Mark 63,505.96 USDT
+~15m · Price -1.02% · OI +4.60%
+OI notional $5.00B · Funding +0.0180% / 8h eq.
+As of 09-29 11:59:56 UTC</p></section><section class="field"><h3>The read</h3><p>Open interest is expanding during the drop. That alone does not establish continued downside.</p></section><section class="field"><h3>Watch next</h3><p>Watch whether open interest keeps expanding as price falls, or the pattern breaks.</p></section><footer>OI changes use coin units. Funding: 8h equivalent estimates. Market monitoring only.</footer></div></article><article class="message" data-kind="positive_funding"><div class="byline"><span class="avatar">T</span><strong>Tokn Market Watch</strong><span class="app">APP</span><span class="demo">DEMO</span></div><div class="card" style="--accent:#fbbf24"><div class="brand">TOKN / MARKET WATCH</div><h2>DEMO · BTC · LONGS PAYING UP</h2><p class="description">Positive funding is elevated across the covered venues.
+Current funding estimates · 2/2 fresh venues
+Sep 29, 2026 · 08:00 AM EDT</p><section class="field"><h3>Hyperliquid</h3><p>Mark 64,820.00 USD
+~15m · Price +1.28% · OI +4.60%
+OI notional $12.40B · Funding +0.0500% / 8h eq.
+Received 09-29 11:59:56 UTC</p></section><section class="field"><h3>OKX</h3><p>Mark 64,802.00 USDT
+~15m · Price +1.28% · OI +4.60%
+OI notional $5.10B · Funding +0.0400% / 8h eq.
+As of 09-29 11:59:56 UTC</p></section><section class="field"><h3>The read</h3><p>At these estimated rates, longs pay shorts. Positive funding alone does not establish a reversal.</p></section><section class="field"><h3>Watch next</h3><p>Watch whether funding cools or stays elevated alongside price and open interest.</p></section><footer>OI changes use coin units. Funding: 8h equivalent estimates. Market monitoring only.</footer></div></article><article class="message" data-kind="negative_funding"><div class="byline"><span class="avatar">T</span><strong>Tokn Market Watch</strong><span class="app">APP</span><span class="demo">DEMO</span></div><div class="card" style="--accent:#fbbf24"><div class="brand">TOKN / MARKET WATCH</div><h2>DEMO · BTC · SHORTS PAYING UP</h2><p class="description">Negative funding is elevated across the covered venues.
+Current funding estimates · 2/2 fresh venues
+Sep 29, 2026 · 08:00 AM EDT</p><section class="field"><h3>Hyperliquid</h3><p>Mark 64,820.00 USD
+~15m · Price +1.28% · OI +4.60%
+OI notional $12.40B · Funding -0.0500% / 8h eq.
+Received 09-29 11:59:56 UTC</p></section><section class="field"><h3>OKX</h3><p>Mark 64,802.00 USDT
+~15m · Price +1.28% · OI +4.60%
+OI notional $5.10B · Funding -0.0400% / 8h eq.
+As of 09-29 11:59:56 UTC</p></section><section class="field"><h3>The read</h3><p>At these estimated rates, shorts pay longs. Negative funding alone does not establish a rebound.</p></section><section class="field"><h3>Watch next</h3><p>Watch whether funding moves toward zero or stays negative as price changes.</p></section><footer>OI changes use coin units. Funding: 8h equivalent estimates. Market monitoring only.</footer></div></article><article class="message" data-kind="funding_divergence"><div class="byline"><span class="avatar">T</span><strong>Tokn Market Watch</strong><span class="app">APP</span><span class="demo">DEMO</span></div><div class="card" style="--accent:#a78bfa"><div class="brand">TOKN / MARKET WATCH</div><h2>DEMO · BTC · FUNDING SPLIT</h2><p class="description">The venues are pricing funding differently.
+Current funding estimates · 2/2 fresh venues
+Sep 29, 2026 · 08:00 AM EDT</p><section class="field"><h3>Hyperliquid</h3><p>Mark 64,820.00 USD
+~15m · Price +1.28% · OI +4.60%
+OI notional $12.40B · Funding +0.0120% / 8h eq.
+Received 09-29 11:59:56 UTC</p></section><section class="field"><h3>OKX</h3><p>Mark 64,802.00 USDT
+~15m · Price +1.28% · OI +4.60%
+OI notional $5.10B · Funding +0.0480% / 8h eq.
+As of 09-29 11:59:56 UTC</p></section><section class="field"><h3>Funding gap · 8h equivalent</h3><p>3.60 bps · 1 bp = 0.01 percentage points</p></section><section class="field"><h3>The read</h3><p>Rates differ on the same 8h basis. Fees, basis moves and changing rates can outweigh the gap.</p></section><section class="field"><h3>Watch next</h3><p>Watch whether the funding gap widens or narrows across fresh readings.</p></section><footer>OI changes use coin units. Funding: 8h equivalent estimates. Market monitoring only.</footer></div></article><article class="message" data-kind="am_brief"><div class="byline"><span class="avatar">T</span><strong>Tokn Market Watch</strong><span class="app">APP</span><span class="demo">DEMO</span></div><div class="card" style="--accent:#38bdf8"><div class="brand">TOKN / MARKET WATCH</div><h2>DEMO · AM BRIEF</h2><p class="description">Sep 29, 2026 · 08:00 AM EDT
+Coverage · 3/3 assets ready</p><section class="field"><h3>BTC</h3><p>Hyperliquid
+Mark 64,820.00 USD
+~15m · Price +1.28% · OI +4.60%
+OI notional $12.40B · Funding +0.0120% / 8h eq.
+Received 09-29 11:59:56 UTC
+
+OKX
+Mark 64,802.00 USDT
+~15m · Price +1.28% · OI +4.60%
+OI notional $5.10B · Funding +0.0180% / 8h eq.
+As of 09-29 11:59:56 UTC</p></section><section class="field"><h3>ETH</h3><p>Hyperliquid
+Mark 3,388.00 USD
+~15m · Price -0.35% · OI +1.20%
+OI notional $3.20B · Funding -0.0060% / 8h eq.
+Received 09-29 11:59:56 UTC
+
+OKX
+Mark 3,386.00 USDT
+~15m · Price -0.35% · OI +1.20%
+OI notional $1.80B · Funding -0.0080% / 8h eq.
+As of 09-29 11:59:56 UTC</p></section><section class="field"><h3>SOL</h3><p>Hyperliquid
+Mark 143.10 USD
+~15m · Price +0.63% · OI -1.10%
+OI notional $920.00M · Funding +0.0100% / 8h eq.
+Received 09-29 11:59:56 UTC
+
+OKX
+Mark 143.06 USDT
+~15m · Price +0.63% · OI -1.10%
+OI notional $610.00M · Funding +0.0140% / 8h eq.
+As of 09-29 11:59:56 UTC</p></section><footer>OI changes use coin units. Funding: 8h equivalent estimates. Market monitoring only.</footer></div></article><article class="message" data-kind="free_look"><div class="byline"><span class="avatar">T</span><strong>Tokn Market Watch</strong><span class="app">APP</span><span class="demo">DEMO</span></div><div class="card" style="--accent:#94a3b8"><div class="brand">TOKN / MARKET WATCH</div><h2>DEMO · FREE LOOK · BTC</h2><p class="description">Sep 29, 2026 · 08:00 AM EDT
+Coverage · 1/1 assets ready</p><section class="field"><h3>BTC</h3><p>Hyperliquid
+Mark 64,820.00 USD
+~15m · Price +1.28% · OI +4.60%
+OI notional $12.40B · Funding +0.0120% / 8h eq.
+Received 09-29 11:59:56 UTC
+
+OKX
+Mark 64,802.00 USDT
+~15m · Price +1.28% · OI +4.60%
+OI notional $5.10B · Funding +0.0180% / 8h eq.
+As of 09-29 11:59:56 UTC</p></section><section class="field"><h3>Inside the full feed</h3><p>BTC, ETH and SOL coverage · positioning alerts · twice-daily briefs.</p></section><footer>OI changes use coin units. Funding: 8h equivalent estimates. Market monitoring only.</footer></div></article><article class="message" data-kind="data_limited"><div class="byline"><span class="avatar">T</span><strong>Tokn Market Watch</strong><span class="app">APP</span><span class="demo">DEMO</span></div><div class="card" style="--accent:#fbbf24"><div class="brand">TOKN / MARKET WATCH</div><h2>DEMO · DATA CHECK · COVERAGE LIMITED</h2><p class="description">Sep 29, 2026 · 08:00 AM EDT</p><section class="field"><h3>Affected coverage</h3><p>SOL · OKX — stale or future reading</p></section><section class="field"><h3>What changes</h3><p>Affected readings are withheld. Assets with sufficient fresh coverage continue.</p></section><footer>Data-status update · No market signal</footer></div></article><article class="message" data-kind="data_restored"><div class="byline"><span class="avatar">T</span><strong>Tokn Market Watch</strong><span class="app">APP</span><span class="demo">DEMO</span></div><div class="card" style="--accent:#34d399"><div class="brand">TOKN / MARKET WATCH</div><h2>DEMO · DATA CHECK · COVERAGE RESTORED</h2><p class="description">Sep 29, 2026 · 08:00 AM EDT</p><section class="field"><h3>Status</h3><p>Configured source coverage has recovered. Fresh measurements are available.</p></section><footer>Data-status update · No market signal</footer></div></article></div><p class="fine">Illustrative layout. Discord fonts, wrapping and timestamp placement vary by device. Colors identify message types, not confidence or expected returns. No network calls, webhooks or tracking are embedded in this preview.</p></main>
+<script>document.getElementById('kind').addEventListener('change',function(){document.querySelectorAll('.message').forEach(function(card){card.hidden=this.value!=='all'&&card.dataset.kind!==this.value},this)})</script></body></html>
