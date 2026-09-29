@@ -1,13 +1,13 @@
 # Tokn Market Watch: subscriber value and next product work
 
-Status: September 29, 2026. Product hypotheses below are not validated demand or performance claims. This document distinguishes implemented presentation and follow-through from proposed analytical modules. Live rollout and demand remain unverified.
+Status: September 29, 2026. Product hypotheses below are not validated demand or performance claims. Conditional position playbooks, follow-through and a read-only historical mark-outcome report are implemented. Price-defined entry/exit setups and a validated edge remain future work. Demand and sustained operation remain unverified.
 
 ## Key facts
 
 - Current inputs: BTC, ETH and SOL mark prices, open interest and funding from Hyperliquid and OKX. The default requires fresh coverage from both venues.
-- Current product: reproducible condition alerts, morning/evening briefs, a daily BTC sample, archive and delivery receipts. The updated cards explain the observation, suggest the next research check, and display the configured condition thresholds. Briefs open with asset-by-asset context.
-- Not yet implemented: support/resistance or candle-based entry triggers, historical outcome reports, subscriber-level preferences, checkout/access management, or a demonstrated trading edge.
-- The operator has verified a Discord connection test and a healthy collection cycle. Sustained production operation, actual market cards and paid demand still need verification.
+- Current product: reproducible condition alerts, morning/evening briefs, a daily BTC sample, archive and delivery receipts. The updated cards identify conditional continuation scenarios, separate long/short/new-entry considerations, quantify funding carry and display the configured condition thresholds. Briefs open with asset-by-asset context.
+- Not yet implemented: support/resistance or candle-based entry triggers, simulated trade-performance reports, subscriber-level preferences, checkout/access management, or a demonstrated trading edge.
+- The operator has verified a Discord connection test, healthy collection cycles, delivered briefs/coverage cards and follow-through installation. A real original-alert/follow-up pair, sustained operation and paid demand still need verification.
 - CoinGlass already publishes funding comparisons and offers price/open-interest alerts. That makes another feed of those measurements a weak basis for differentiation. This is a product judgment, not evidence that nobody would buy it.
 
 ## Analysis
@@ -22,7 +22,7 @@ The recurring value should come from selection, explanation and follow-through. 
 
 ### What actionable means
 
-The current update provides a research action: check whether the observed conditions persist, whether venue agreement holds, and whether funding costs change. It does not turn the alert threshold into a trade entry. A threshold crossing on a rolling 15-minute comparison is also not a stop-loss.
+The current update adds conditional position playbooks: separate guidance for existing longs, existing shorts and new entries, a directional scenario derived from price/OI agreement, and a quantified funding-cost comparison. Funding watches also notify changes in the separate directional scenario. See `POSITION_PLAYBOOKS.md`. It does not turn the alert threshold into a trade entry. A threshold crossing on a rolling 15-minute comparison is also not a stop-loss.
 
 A future scenario card can define a directional hypothesis, a measurable confirmation condition, an invalidation condition and an expiry time. Numeric market levels require suitable historical candle data and a declared method. The existing mark snapshot is not support, resistance, a traded price or an executable fill.
 
@@ -47,15 +47,15 @@ Implemented behavior (see `FOLLOW_THROUGH.md` for exact limits and rollout):
 
 Offline replay and restart tests are implemented and pass. Remaining acceptance: deploy the update and inspect the full original-alert-to-follow-up experience and original-message receipts in the private Discord pilot.
 
-### 2. Honest outcome reports
+### 2. Honest outcome reports: implemented for operator research
 
 Subscriber benefit: inspect what happened after every qualifying alert, including unfavorable outcomes and missing observations.
 
-Proposed implementation: record per-venue mark changes at predeclared 15-, 60- and 240-minute horizons; retain timestamps, rule version, sample size, missing-data counts and the complete cohort. Measure from the original event; label alert-to-delivery delay separately. Use only readings inside a stated timing tolerance. Do not substitute the latest reading after an outage.
+Implemented: `outcomes` reads per-venue mark changes at predeclared 15-, 60- and 240-minute horizons from the existing archive. It groups issued alerts by rule/version, thresholds, venue/instrument cohort and directional context; includes measured/pending/missing counts; and lists unsupported evidence as exclusions. It uses the first valid reading at/after the horizon within 180 seconds, respecting source and receipt time cutoffs. It does not substitute a late outage-recovery price. It measures from the original event, not receipt/entry time; delivery-time performance is not modeled. This is an operator report, not automatically published customer statistics.
 
 These are market movement observations, not subscriber P&L or an achievable win rate. Sampled maxima/minima are not intrabar extremes. A future simulated trading report needs frozen entry/exit rules, fees, funding, slippage and fill assumptions, plus out-of-sample evaluation. Existing ToknClaw paper results do not automatically validate this product.
 
-Acceptance: every eligible event appears in the report, including unavailable horizons; results reproduce from archived evidence without selecting only successful examples.
+Offline acceptance passes: every selected initial alert is included or explicitly excluded, every included venue/horizon is counted, source/fetch lookahead and late substitutions are rejected, and the report does not collect, publish or modify the archive. Actual production results require running it on the server.
 
 ### 3. Session context and level-based scenarios
 
@@ -73,7 +73,7 @@ Current delivery includes an at-a-glance snapshot. A true catch-up needs histori
 
 ### 5. Funding-cost context and event risk
 
-A small next enhancement can express the current estimated funding charge per standard notional, using the actual venue interval and explicit assumptions. This is a comparison tool, not a guaranteed carry return.
+Implemented: cards show estimated long/short cash flow per 10,000 quote-unit notional on an 8-hour-equivalent basis at unchanged rates; evidence also records the actual-interval estimate. Funding-gap cards identify the more favorable rate for each side and require considering switching costs. This is a comparison tool, not a guaranteed carry return.
 
 Later, reuse ToknNews ingestion for sourced, time-stamped context or upcoming scheduled events. Confirm reliability, latency and usage rights first. A nearby headline is not proof it caused a move. Defer this integration until the core subscription has paid demand.
 
@@ -85,7 +85,7 @@ Later, reuse ToknNews ingestion for sourced, time-stamped context or upcoming sc
 - Judge contribution after hosting, membership/payment fees, licensed data, refunds and support. Low server cost alone does not establish a profitable business. Do not add premium data subscriptions until a feature's benefit justifies them.
 - Continue operations hardening and a private reliability pilot alongside product work. Delivery reliability and understandable content are both necessary.
 
-The copy revision uses deterministic templates and the existing data. It adds no paid model calls or data vendor subscription. Lifecycle tracking uses the current Python/SQLite stack. Outcome evaluation remains planned; ongoing operational cost and subscriber value still need to be measured.
+The copy revision uses deterministic templates and the existing data. It adds no paid model calls or data vendor subscription. Lifecycle tracking uses the current Python/SQLite stack. Descriptive outcome evaluation is now implemented; trade simulation and out-of-sample edge validation remain planned; ongoing operational cost and subscriber value still need to be measured.
 
 ## Sources checked September 29, 2026
 

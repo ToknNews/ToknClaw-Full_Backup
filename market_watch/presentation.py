@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from .branding import BANNER_URL, ICON_URL, TOKN_BLUE
 from .rules import matching_rules
+from .playbooks import build_playbook, budget_text, followup_action
 
 
 BRAND = 'TOKN / MARKET WATCH'
@@ -12,38 +13,13 @@ COLORS = {'up': TOKN_BLUE, 'down': 0xFB7185, 'funding': 0xFBBF24,
           'spread': 0xA78BFA, 'brief': TOKN_BLUE, 'sample': 0x94A3B8,
           'degraded': 0xFBBF24, 'recovered': 0x34D399}
 VENUES = {'hyperliquid': 'Hyperliquid', 'okx': 'OKX'}
-FOOTER = 'Snapshot criteria, not entry/exit levels. OI: coin units. Funding: 8h equivalent estimates.'
+FOOTER = 'Conditional scenario; edge untested. No entry/stop model. OI: coin units. Funding: 8h equivalent estimates.'
 ALERT_COPY = {
-    'price_oi_up': ('PRICE ↑ / OI ↑', 'up',
-        'Price is climbing. Open interest is building with it.',
-        'There are more open contracts during the rally. This adds positioning context, '
-        'but does not identify whether buyers or sellers initiated them.',
-        'For a continuation thesis, look for the same pattern in a fresh reading. '
-        'A price retrace with OI still elevated is a reason to reassess.'),
-    'price_oi_down': ('PRICE ↓ / OI ↑', 'down',
-        'The selloff is adding open contracts.',
-        'Price is falling while open interest expands. New short pressure is one possible '
-        'explanation; these inputs cannot establish it.',
-        'For downside continuation, check whether price keeps falling while OI expands. '
-        'A price rebound with OI still elevated changes that read.'),
-    'positive_funding': ('LONGS PAYING UP', 'funding',
-        'Longs face elevated estimated funding costs.',
-        'Longs would pay shorts at the displayed estimates. That affects carry cost; '
-        'it does not time a reversal.',
-        'Before holding through settlement, check the venue’s actual funding interval and '
-        'current rate. Reassess the carry cost if rates cool.'),
-    'negative_funding': ('SHORTS PAYING UP', 'funding',
-        'Shorts face elevated estimated funding costs.',
-        'Shorts would pay longs at the displayed estimates. That affects carry cost; '
-        'it does not time a rebound.',
-        'Before holding through settlement, check the venue’s actual funding interval and '
-        'current rate. Reassess the carry cost if rates move toward zero.'),
-    'funding_divergence': ('FUNDING SPLIT', 'spread',
-        'Same asset. Different estimated funding costs.',
-        'Venue choice changes the estimated carry cost. The displayed gap is a comparison, '
-        'not locked-in arbitrage.',
-        'Compare actual settlement intervals, fees and basis before using the gap. '
-        'Recheck both rates together; either can change before settlement.'),
+    'price_oi_up': ('PRICE ↑ / OI ↑', 'up', 'Price is climbing. Open interest is building with it.'),
+    'price_oi_down': ('PRICE ↓ / OI ↑', 'down', 'The selloff is adding open contracts.'),
+    'positive_funding': ('LONGS PAYING UP', 'funding', 'Longs face elevated estimated funding costs.'),
+    'negative_funding': ('SHORTS PAYING UP', 'funding', 'Shorts face elevated estimated funding costs.'),
+    'funding_divergence': ('FUNDING SPLIT', 'spread', 'Same asset. Different estimated funding costs.'),
 }
 
 
@@ -170,13 +146,20 @@ def recheck_rule(config, rule):
 
 
 def alert_card(config, rule, asset, observations, comparisons, now, reference=None):
-    headline, accent, hook, interpretation, watch = ALERT_COPY[rule]
+    headline, accent, hook = ALERT_COPY[rule]
     changes = {row['venue']: row for row in comparisons}
     coverage = f'{len(observations)}/{len(config.venues)} fresh venues'
     context = (f'~{config.lookback_minutes}m window · {len(changes)} valid baselines'
                if rule.startswith('price_oi') else 'Current funding estimates')
-    fields = [('The read', interpretation), ('Your next check', watch),
-              ('Recheck rule', recheck_rule(config, rule))]
+    playbook = build_playbook(config, rule, observations, comparisons)
+    recheck = recheck_rule(config, rule)
+    if not rule.startswith('price_oi') and playbook['direction'] in {'bullish_continuation', 'bearish_continuation'}:
+        price_rule = 'price_oi_up' if playbook['direction'] == 'bullish_continuation' else 'price_oi_down'
+        recheck += '\nDirection separately: ' + recheck_rule(config, price_rule)
+    fields = [('The read', playbook['read']), ('Position playbook', playbook['position']),
+              ('What changes the read', recheck)]
+    if not rule.startswith('price_oi'):
+        fields.append(('Funding budget · standardized notional', budget_text(observations)))
     fields += [(VENUES[obs.venue], venue_lines(obs, changes.get(obs.venue), config.lookback_minutes))
                for obs in sorted(observations, key=lambda row: row.venue)]
     if rule == 'funding_divergence':
@@ -270,21 +253,25 @@ def followup_card(config, detail, observations):
                   'faded': 'The original condition no longer qualifies at this check.',
                   'unavailable': 'A valid market conclusion is unavailable.'}[condition]
         read = ending + ' ' + latest
-        next_check = 'Tracking has ended for this alert. A later qualifying alert starts a separate watch.'
     elif condition == 'faded':
         headline, accent = 'CONDITION FADED', 'sample'
         read = 'Fresh readings no longer meet the original rule. This watch is closed.'
-        next_check = 'Reassess the original thesis. A faded condition does not by itself establish a reversal.'
     elif condition == 'unavailable':
         headline, accent = 'CHECK PAUSED', 'degraded'
         read = 'The original condition cannot be verified with the required fresh measurements and baselines.'
-        next_check = 'Treat the condition as unconfirmed until coverage returns. Missing data is not a market reversal.'
     else:
         headline = 'COVERAGE BACK · CONDITION HOLDS' if detail['recovered'] else 'CONDITION HOLDS'
         accent = 'recovered' if detail['recovered'] else 'brief'
         read = 'The original rule still qualifies at this sampled check. Conditions between checks are not established.'
-        next_check = 'Keep the original scenario on watch and reassess if its conditions change.'
-    fields = [('The update', read), ('Your next check', next_check)]
+    if detail.get('direction_changed') and condition == 'holding' and not reason:
+        headline = 'TRADE READ CHANGED · CONDITION HOLDS'
+        read = 'The funding rule still qualifies, but the price/OI scenario has changed. Reassess the directional thesis separately from carry.'
+    next_check = followup_action(detail['rule'], condition, reason)
+    fields = [('The update', read), ('Position update', next_check)]
+    if observations and condition != 'unavailable' and not detail['rule'].startswith('price_oi'):
+        playbook = build_playbook(config, detail['rule'], observations, detail['comparisons'])
+        fields.append(('Current trade read', playbook['read']))
+        fields.append(('Funding budget · standardized notional', budget_text(observations)))
     if condition != 'unavailable':
         changes = {row['venue']: row for row in detail['comparisons']}
         since = {row['venue']: row for row in detail['since_original']}

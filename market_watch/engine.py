@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from .models import Event, event_id
 from .rules import matching_rules
+from .playbooks import build_playbook
 from .presentation import alert_card, brief_card, health_card
 
 
@@ -81,7 +82,8 @@ def market_alerts(config, store, observations, now):
                 return events
             text, presentation = alert_card(config, rule, asset, group, comparisons, now, reference=event_id(key, now))
             evidence = {'rule': rule, 'asset': asset, 'config': asdict(config), 'observations': [o.to_dict() for o in group],
-                        'comparisons': comparisons, 'presentation': presentation}
+                        'comparisons': comparisons, 'presentation': presentation,
+                        'playbook': build_playbook(config, rule, group, comparisons)}
             events.append(Event(key, 'alert', 'paid', now, deadline(config, group, now),
                                 text, evidence))
     return events

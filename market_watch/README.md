@@ -219,3 +219,7 @@ The tests cover normalization, partial sources, current-schema input validation,
 A read-only check in the development environment retrieved the three configured Hyperliquid assets. OKX returned non-JSON content on both the older and officially recommended global endpoint, so the two-venue default correctly suppressed market comparisons. This is an unresolved deployment/source-access check, not grounds to substitute fabricated observations or bypass restrictions. Validate the appropriate regional source on the actual host before launch; a single-venue configuration is an explicit product-scope change and must be described as such to subscribers.
 
 No real Discord/Telegram messages were sent, no memberships were sold, and no server was deployed during development. Destination receipts/access lifecycle and sustained runtime must be verified on the deployment environment.
+
+## Position playbooks and historical outcomes
+
+See [POSITION_PLAYBOOKS.md](POSITION_PLAYBOOKS.md) for conditional long/short/new-entry guidance, quantified funding budgets, directional changes during funding watches and the read-only `outcomes --days 30` report. These provide positioning context and descriptive mark outcomes; tested entry/stop/target scenarios and trading-return statistics are not implemented.

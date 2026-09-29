@@ -7,6 +7,7 @@ from .engine import assess, change, comparisons_for, deadline
 from .models import Event, Observation
 from .presentation import followup_card
 from .rules import matching_rules
+from .playbooks import build_playbook
 
 
 def start_watch(config, store, event, original_id):
@@ -15,7 +16,8 @@ def start_watch(config, store, event, original_id):
     evidence = event.evidence
     originals = [Observation(**row) for row in evidence['observations']]
     spec = {'config': evidence['config'], 'observations': evidence['observations'],
-            'comparison_venues': [row['venue'] for row in evidence['comparisons']]}
+            'comparison_venues': [row['venue'] for row in evidence['comparisons']],
+            'playbook': evidence.get('playbook')}
     watermarks = {obs.venue: [obs.observed_at, obs.fetched_at] for obs in originals}
     store.start_watch(original_id, evidence['asset'], evidence['rule'], event.created_at, spec, watermarks)
 
@@ -57,6 +59,8 @@ def advance_watches(config, store, observations, errors, routes, now):
         frozen = Config(**spec['config'])
         watermarks = json.loads(track['watermarks'])
         reason = ''
+        previous_check = json.loads(track['last_check'])
+        playbook, direction_changed = None, False
         # No stale catch-up publishing after a missed closing checkpoint.
         publish = True
         if not config.followup_enabled:
@@ -68,15 +72,21 @@ def advance_watches(config, store, observations, errors, routes, now):
         else:
             condition, assessment, group, comparisons, since, watermarks = evaluate_watch(
                 frozen, store, track, spec, watermarks, observations, errors, now)
+            if condition != 'unavailable':
+                playbook = build_playbook(frozen, track['rule'], group, comparisons)
+                previous_playbook = previous_check.get('playbook')
+                if track['state'] == 'watching':
+                    previous_playbook = spec.get('playbook')
+                direction_changed = bool(previous_playbook and previous_playbook['direction'] != playbook['direction'])
             if now >= track['horizon_at']:
                 reason = 'horizon_elapsed'
             elif condition == 'faded':
                 reason = 'condition_faded'
-            elif condition != track['state'] and track['update_count'] >= frozen.followup_max_updates - 1:
+            elif (condition != track['state'] or direction_changed) and track['update_count'] >= frozen.followup_max_updates - 1:
                 reason = 'update_limit'
         closed = bool(reason)
         state = ('faded' if reason == 'condition_faded' else 'expired') if closed else condition
-        changed = closed or state != track['state']
+        changed = closed or state != track['state'] or direction_changed
         detail = {
             'original_id': track['original_id'], 'original_created_at': track['original_at'],
             'asset': track['asset'], 'rule': track['rule'], 'config': spec['config'],
@@ -84,7 +94,7 @@ def advance_watches(config, store, observations, errors, routes, now):
             'condition': condition, 'closed_reason': reason, 'assessment': assessment,
             'recovered': track['state'] == 'unavailable' and condition in ('holding', 'faded'),
             'observations': [obs.to_dict() for obs in group], 'comparisons': comparisons,
-            'since_original': since,
+            'since_original': since, 'playbook': playbook, 'direction_changed': direction_changed,
         }
         count = track['update_count']
         if changed:

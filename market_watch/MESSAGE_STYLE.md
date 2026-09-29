@@ -10,15 +10,15 @@ Assets come from `ToknNews/ToknNews-Full_Backup` at commit `70fcd4b37147acbb3429
 
 ## Voice and hierarchy
 
-Use a direct, slightly informal market-desk voice. Lead with a useful interpretation, then explain what the reader should check and show the evidence. **The read** explains the observation. **Your next check** gives a concrete research action. **Recheck rule** shows the actual configured thresholds and what would make the condition stop qualifying. These are snapshot conditions, not validated trade entry, stop-loss or profit-target levels.
+Use a direct, slightly informal market-desk voice. Lead with a useful interpretation, then explain what the reader should check and show the evidence. **The read** identifies a conditional bullish/bearish continuation scenario or says direction is unconfirmed. **Position playbook** separates existing long, existing short and new-entry considerations. **What changes the read** shows the actual configured thresholds and what would make each condition stop qualifying. Funding budgets quantify carrying-cost exposure on a standard notional. These are snapshot conditions, not validated trade entry, stop-loss or profit-target levels.
 
 Every market alert uses this order:
 
 1. Tokn brand and asset/event headline.
 2. Short hook, time window, venue/baseline coverage and New York timestamp.
 3. The read.
-4. Your next check.
-5. Recheck rule, including insufficient-data handling.
+4. Position playbook: long, short and new entry; funding-gap cards also compare the cost of changing venues.
+5. What changes the read, separating the original funding condition from any directional price/OI scenario. Funding alerts also show a standardized carry budget.
 6. Separate Hyperliquid and OKX measurements, and funding gap where relevant.
 7. A compact units/method note.
 
@@ -42,7 +42,9 @@ Discord uses one native embed with vertically stacked fields. Telegram and the e
 | Public sample | FREE LOOK · BTC | Slate | BTC measurements only, plus a short description of full-feed coverage |
 | Data health | DATA CHECK · COVERAGE LIMITED / RESTORED | Amber / Mint | Affected coverage and whether measurements can be used |
 
-Colors identify event types, not confidence, trade direction, or expected returns. No alert, health or brief trigger was added to manufacture messages for this styling change. The existing thresholds, cooldowns, audience routes and scheduled windows continue to apply.
+Colors identify event types, not confidence, trade direction, or expected returns. Initial alert, health and brief triggers are unchanged. Funding follow-ups now also report changes in the separate price/OI scenario, within the existing update cap. The existing thresholds, cooldowns, audience routes and scheduled windows continue to apply.
+
+The interpretation logic, read-only outcome report and path to tested entry/exit scenarios are documented in `POSITION_PLAYBOOKS.md`.
 
 ## Data conventions
 
@@ -58,7 +60,7 @@ The subscriber-value roadmap and validation experiment are in `SUBSCRIBER_VALUE.
 
 ## Preview
 
-`MESSAGE_PREVIEW.html` is a self-contained, responsive design preview with a selector for fourteen examples, including five follow-up alternatives. All example values and timestamps are fictional and each card is labeled DEMO. It has no credentials, network requests, trackers or posting controls. It embeds all three original images. Its layout is illustrative; Discord's exact typography, wrapping and image placement vary by device and theme.
+`MESSAGE_PREVIEW.html` is a self-contained, responsive design preview with a selector for fifteen examples, including six follow-up alternatives. All example values and timestamps are fictional and each card is labeled DEMO. It has no credentials, network requests, trackers or posting controls. It embeds all three original images. Its layout is illustrative; Discord's exact typography, wrapping and image placement vary by device and theme.
 
 ```bash
 # Enter the installed project.

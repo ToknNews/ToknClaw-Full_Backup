@@ -13,6 +13,7 @@ import time
 from .config import load_config
 from .delivery import dispatch, routes_from_env
 from .http import JsonClient
+from .outcomes import report as outcome_report
 from .service import process_lock, run_cycle
 from .sources import collect
 from .storage import Store
@@ -29,6 +30,9 @@ def main(argv=None):
     sub.add_parser('check', help='exit nonzero if sources, collector cadence or delivery are unhealthy')
     export = sub.add_parser('export', help='export archived events as JSON; may contain paid content')
     export.add_argument('--limit', type=int, default=100)
+    outcomes = sub.add_parser('outcomes', help='read-only historical alert mark changes, not trading returns')
+    outcomes.add_argument('--days', type=int, default=30)
+    outcomes.add_argument('--details', action='store_true', help='include every included alert and its horizon samples')
     backup = sub.add_parser('backup', help='consistent SQLite backup; destination must not exist')
     backup.add_argument('destination')
     resolve = sub.add_parser('resolve-delivery', help='resolve an uncertain send after checking the channel')
@@ -49,7 +53,7 @@ def main(argv=None):
                 raise ValueError('configure at least one paid destination before sending')
         if args.command == 'export' and not 1 <= args.limit <= 10000:
             raise ValueError('export limit must be between 1 and 10000')
-        readonly = args.command in {"status", "check", "export", "backup"}
+        readonly = args.command in {"status", "check", "export", "backup", "outcomes"}
         if readonly and not Path(db).is_file():
             raise ValueError("archive not initialized; collect a cycle first")
         with (nullcontext() if readonly else process_lock(db)):
@@ -64,7 +68,11 @@ def main(argv=None):
                         output['delivery'] = dispatch(store, routes, client)
                     print(json.dumps(output, indent=2, allow_nan=False))
                     return 0 if not output['issues'] else 2
-                if args.command == 'export':
+                if args.command == 'outcomes':
+                    with store.db:
+                        store.db.execute('BEGIN')
+                        output = outcome_report(store, time.time(), args.days, args.details)
+                elif args.command == 'export':
                     output = store.export_events(args.limit)
                 elif args.command == 'resolve-delivery':
                     store.resolve_delivery(args.id, args.action, args.remote_id, time.time())

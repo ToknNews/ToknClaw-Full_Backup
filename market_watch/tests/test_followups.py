@@ -342,6 +342,29 @@ class FollowupTests(StoreCase):
         self.assertEqual(self.store.db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
         self.assertEqual(self.store.db.execute('PRAGMA foreign_key_check').fetchall(), [])
 
+    def test_first_funding_followup_compares_direction_to_original_alert(self):
+        self.cfg = replace(self.cfg, max_alerts_per_hour=1)
+        self.start()
+        changed = self.cycle(300, price=102, oi=1040)[0]
+        self.assertTrue(self.evidence(changed)['direction_changed'])
+        self.assertIn('TRADE READ CHANGED', changed['text'])
+
+    def test_funding_watch_reports_direction_changes_and_enforces_existing_cap(self):
+        self.cfg = replace(self.cfg, max_alerts_per_hour=1)
+        self.start()
+        self.cycle(300)
+        changed = self.cycle(600, price=102, oi=1040)[0]
+        self.assertEqual(self.evidence(changed)['condition'], 'holding')
+        self.assertTrue(self.evidence(changed)['direction_changed'])
+        self.assertEqual(self.evidence(changed)['playbook']['direction'], 'bullish_continuation')
+        self.assertIn('TRADE READ CHANGED', changed['text'])
+        self.assertFalse(self.cycle(900, price=102, oi=1040))
+        unconfirmed = self.cycle(1200)[0]
+        self.assertEqual(self.evidence(unconfirmed)['playbook']['direction'], 'unconfirmed')
+        ended = self.cycle(1500, price=104.04, oi=1081.6)[0]
+        self.assertEqual(self.evidence(ended)['closed_reason'], 'update_limit')
+        self.assertEqual(self.track()['update_count'], 4)
+
     def test_configuration_rejects_unbounded_or_ambiguous_followup_settings(self):
         for values in ({'followup_enabled': 1}, {'followup_check_minutes': True},
                        {'followup_horizon_minutes': 1000}, {'followup_max_updates': 1},

@@ -7,6 +7,7 @@ New paid alerts now receive a persistent watch. Updates use the existing Discord
 | Card | Meaning | What happens next |
 | --- | --- | --- |
 | CONDITION HOLDS | Fresh observations still meet the original rule at this check | Continue checking; unchanged checks are quiet |
+| TRADE READ CHANGED · CONDITION HOLDS | The funding rule still qualifies, but the separate price/OI directional scenario changed | Reassess direction independently of carry; consumes an update slot |
 | CHECK PAUSED | Required observations, instruments or price/OI baselines cannot be verified | Keep the watch open for recovery or expiry |
 | COVERAGE BACK · CONDITION HOLDS | A previously unavailable watch is observable and meets the original rule again | Resume normal checks |
 | CONDITION FADED | A valid comparison no longer meets the original rule | Close this watch; it never reopens |
@@ -17,6 +18,8 @@ The first due check can be holding, faded or unavailable. A recovery that no lon
 Every update identifies the original event, original date/time, actual check date/time, elapsed time and sequence. When measurements are valid, it shows separate venue readings and changes since the original mark/OI/funding values. Unavailable updates withhold partial venue numbers and do not infer a market outcome.
 
 Price/OI rules still compare a rolling lookback of approximately 15 minutes by default. Since-original changes use the initial alert's measurements. These are different comparisons: a rolling condition can fade while price remains above its initial mark. Neither mark change represents a customer's executed return. Holdings between sampled checks are not established.
+
+Position updates distinguish long/short continuation, faded conditions, unobservable data and expiry. Funding updates include a current price/OI scenario and carry budget. A first follow-up compares direction with the original playbook when available; older watches without that field remain compatible. See `POSITION_PLAYBOOKS.md`.
 
 ## Defaults and frozen settings
 
@@ -31,7 +34,7 @@ Each initial alert captures its thresholds, rule version, venue/instrument cohor
 
 Checks run on the first collector cycle at or after their due time. The next check is scheduled from the actual check time; missed intermediate checks are not replayed. A watch requires the entire original venue cohort, even when the initial configured minimum was smaller. Source and fetch timestamps must advance beyond the last valid cohort reading; this does not overcome the upstream freshness limitation of Hyperliquid receipt timestamps.
 
-The cap counts generated follow-up events, including events that were not deliverable. If another state change would consume the last slot, it becomes a closing WATCH ENDED update instead of promising further tracking. A valid fade closes immediately. An unchanged condition can remain under observation until the horizon, with the closing slot reserved. This cap is separate from the existing six initial market alerts/hour; it is not a claim that all message types together are capped at six/hour.
+The cap counts generated follow-up events, including events that were not deliverable. If another state change or directional-scenario change would consume the last slot, it becomes a closing WATCH ENDED update instead of promising further tracking. A valid fade closes immediately. An unchanged condition can remain under observation until the horizon, with the closing slot reserved. This cap is separate from the existing six initial market alerts/hour; it is not a claim that all message types together are capped at six/hour.
 
 A closing check can arrive up to the original `max_age_seconds` after the horizon (180 seconds by default). The card always shows its actual time and elapsed minutes. A later return archives an unavailable expiry, closes the watch and sends no catch-up message. It never substitutes a much later price for the missing closing checkpoint.
 
@@ -111,4 +114,4 @@ cd /opt/tokn-market-watch
 python3 -m market_watch.message_preview --kind followup_faded
 ```
 
-The HTML preview includes five follow-up alternatives plus the nine existing examples. These are independent fictional scenarios, not one chronological watch. All carry a DEMO label. Visual wrapping must still be checked in the real Discord client.
+The HTML preview includes six follow-up alternatives plus the nine existing examples. These are independent fictional scenarios, not one chronological watch. All carry a DEMO label. Visual wrapping must still be checked in the real Discord client.

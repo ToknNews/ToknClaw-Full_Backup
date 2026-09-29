@@ -77,6 +77,19 @@ def examples():
                                       'funding_delta_bps_8h': 0.0} for o in rows]}
         text, presentation = followup_card(cfg, detail, rows)
         results.append({'kind': kind, 'text': text, 'presentation': presentation})
+    # Funding can remain elevated while the separate directional scenario changes.
+    checked = NOW + 600
+    rows = [replace(o, observed_at=checked-4, fetched_at=checked-2,
+                    mark_price=o.mark_price*0.98, oi_base=o.oi_base*1.03, oi_usd=o.oi_usd*0.98*1.03,
+                    funding_rate=bps/10000*o.funding_interval_hours/8) for o,bps in zip(btc,(5,4))]
+    detail = {'original_id': 'demo-funding-watch', 'original_created_at': NOW, 'asset': 'BTC',
+              'rule': 'positive_funding', 'checked_at': checked, 'condition': 'holding',
+              'closed_reason': '', 'recovered': False, 'sequence': 2, 'direction_changed': True,
+              'comparisons': sample_changes(rows, price_pct=-1.02, now=checked),
+              'since_original': [{'venue': o.venue, 'price_pct': -2.0, 'oi_base_pct': 3.0,
+                                  'funding_delta_bps_8h': 0.0} for o in rows]}
+    text, presentation = followup_card(cfg, detail, rows)
+    results.append({'kind': 'followup_trade_read_changed', 'text': text, 'presentation': presentation})
     all_rows = btc + eth + sol
     changes = {'BTC': sample_changes(btc), 'ETH': sample_changes(eth, -0.35, 1.2),
                'SOL': sample_changes(sol, 0.63, -1.1)}
@@ -137,7 +150,7 @@ h2{font-size:19px;line-height:1.3;margin:9px 0;color:#fff;letter-spacing:-.3px}.
 footer{margin-top:18px;color:#a5afbf;font-size:10px;line-height:1.5}.fine{margin-top:30px;color:#a5b0c4;font-size:12px;max-width:870px}
 [hidden]{display:none!important}@media(max-width:760px){.page{padding:26px 16px}h1{font-size:30px}.grid{grid-template-columns:1fr}.card{padding:16px}.toolbar{flex-wrap:wrap}.field p{font-size:12px}.wordmark{width:114px}.eyebrow{font-size:10px;letter-spacing:2px;padding-left:16px}.masthead{gap:16px}.thumbnail{width:54px;height:54px;margin-left:10px}.brand{font-size:10px}.byline{gap:7px;font-size:12px}}
 </style></head><body><main class="page"><div class="masthead"><img class="wordmark" alt="Tokn" src="''' + asset('Tokn_Logo_Main_4.png', 'image/png') + '''"><div class="eyebrow">MARKET WATCH<br>MESSAGE DESIGN</div></div>
-<h1>Read the market. Stay with the story.</h1><p class="intro">What changed. Why it matters. What to check next. Tokn’s original coin and electric-blue palette carry through the feed; the circuit-board banner signs off scheduled briefs.</p>
+<h1>Read the market. Stay with the story.</h1><p class="intro">A conditional trade read. Long/short position guidance. Funding costs and follow-through. Tokn’s original coin and electric-blue palette carry through the feed; the circuit-board banner signs off scheduled briefs.</p>
 <div class="notice">DESIGN PREVIEW · ALL MARKET VALUES ARE FICTIONAL</div>
 <div class="toolbar"><label for="kind">Preview a message</label><select id="kind"><option value="all">All formats</option>''' + options + '''</select></div>
 <div class="grid">''' + ''.join(cards) + '''</div><p class="fine">Independent fictional examples, not one chronological watch. Illustrative native Discord layout; fonts, wrapping, thumbnails and timestamp placement vary by device and theme. Native card backgrounds are controlled by Discord. Colors identify message types, not confidence or expected returns. Telegram retains matching plain text. This preview embeds the original images and makes no network requests.</p></main>
