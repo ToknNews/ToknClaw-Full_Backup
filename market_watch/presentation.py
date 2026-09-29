@@ -3,12 +3,13 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from .branding import BANNER_URL, ICON_URL, TOKN_BLUE
 from .rules import matching_rules
 
 
 BRAND = 'TOKN / MARKET WATCH'
-COLORS = {'up': 0x38BDF8, 'down': 0xFB7185, 'funding': 0xFBBF24,
-          'spread': 0xA78BFA, 'brief': 0x38BDF8, 'sample': 0x94A3B8,
+COLORS = {'up': TOKN_BLUE, 'down': 0xFB7185, 'funding': 0xFBBF24,
+          'spread': 0xA78BFA, 'brief': TOKN_BLUE, 'sample': 0x94A3B8,
           'degraded': 0xFBBF24, 'recovered': 0x34D399}
 VENUES = {'hyperliquid': 'Hyperliquid', 'okx': 'OKX'}
 FOOTER = 'Snapshot criteria, not entry/exit levels. OI: coin units. Funding: 8h equivalent estimates.'
@@ -82,19 +83,29 @@ def _units(value):
 
 
 def validate_presentation(presentation):
-    """Validate the restricted, link-free embed schema before external delivery."""
+    """Validate archived v1 cards or v2 cards with fixed, commit-pinned Tokn art."""
     if not isinstance(presentation, dict) or set(presentation) != {'format', 'discord'}:
         raise ValueError('invalid presentation')
-    if presentation['format'] != 'tokn-card-v1' or not isinstance(presentation['discord'], dict):
+    version = presentation['format']
+    if version not in ('tokn-card-v1', 'tokn-card-v2') or not isinstance(presentation['discord'], dict):
         raise ValueError('invalid presentation')
     embed = presentation['discord']
-    if set(embed) != {'author', 'title', 'description', 'fields', 'footer', 'timestamp', 'color'}:
+    required = {'author', 'title', 'description', 'fields', 'footer', 'timestamp', 'color'}
+    optional = {'thumbnail', 'image'} if version == 'tokn-card-v2' else set()
+    if not required <= set(embed) or set(embed) - required - optional:
         raise ValueError('invalid presentation')
-    if (not isinstance(embed['author'], dict) or set(embed['author']) != {'name'}
+    author_keys = {'name', 'icon_url'} if version == 'tokn-card-v2' else {'name'}
+    if (not isinstance(embed['author'], dict) or set(embed['author']) != author_keys
             or not isinstance(embed['footer'], dict) or set(embed['footer']) != {'text'}
             or not isinstance(embed['fields'], list) or len(embed['fields']) > 25
             or type(embed['color']) is not int or not 0 <= embed['color'] <= 0xFFFFFF):
         raise ValueError('invalid presentation')
+    if version == 'tokn-card-v2':
+        if embed['author']['icon_url'] != ICON_URL:
+            raise ValueError('invalid brand asset')
+        for key, approved_url in (('thumbnail', ICON_URL), ('image', BANNER_URL)):
+            if key in embed and embed[key] != {'url': approved_url}:
+                raise ValueError('invalid brand asset')
     parts = [(embed['title'], 256), (embed['description'], 4096),
              (embed['author']['name'], 256), (embed['footer']['text'], 2048)]
     for field in embed['fields']:
@@ -114,14 +125,20 @@ def validate_presentation(presentation):
     return embed
 
 
-def card(title, description, fields, color, now, footer=FOOTER):
+def card(title, description, fields, color, now, footer=FOOTER, art='mark'):
     embed = {
-        'author': {'name': BRAND}, 'title': title, 'description': description,
+        'author': {'name': BRAND, 'icon_url': ICON_URL}, 'title': title, 'description': description,
         'color': color, 'timestamp': datetime.fromtimestamp(now, timezone.utc).isoformat(),
         'fields': [{'name': name, 'value': value, 'inline': False} for name, value in fields],
         'footer': {'text': footer},
     }
-    presentation = {'format': 'tokn-card-v1', 'discord': embed}
+    if art == 'mark':
+        embed['thumbnail'] = {'url': ICON_URL}
+    elif art == 'banner':
+        embed['image'] = {'url': BANNER_URL}
+    elif art != 'compact':
+        raise ValueError('invalid card art')
+    presentation = {'format': 'tokn-card-v2', 'discord': embed}
     validate_presentation(presentation)
     text = BRAND + '\n' + title + '\n' + description
     for name, value in fields:
@@ -218,7 +235,7 @@ def brief_card(config, audience, covered, observations, comparisons, issues, now
         description += '\nSome source measurements are unavailable; affected data is withheld.'
     if audience == 'free':
         fields.append(('Inside the full feed', 'BTC, ETH and SOL · live condition alerts · what to check next · morning and evening briefs.'))
-    return card(title, description, fields, COLORS['brief' if audience == 'paid' else 'sample'], now)
+    return card(title, description, fields, COLORS['brief' if audience == 'paid' else 'sample'], now, art='banner')
 
 
 def health_card(config, issues, now):
@@ -235,10 +252,10 @@ def health_card(config, issues, now):
         fields = [('Affected coverage', '\n'.join(rows)),
                   ('What changes', 'Affected readings are withheld. Assets with sufficient fresh coverage continue.')]
         return card('DATA CHECK · COVERAGE LIMITED', local_stamp(now, config.timezone), fields,
-                    COLORS['degraded'], now, 'Data-status update · No market signal')
+                    COLORS['degraded'], now, 'Data-status update · No market signal', art='compact')
     return card('DATA CHECK · COVERAGE RESTORED', local_stamp(now, config.timezone),
                 [('Status', 'Configured source coverage has recovered. Fresh measurements are available.')],
-                COLORS['recovered'], now, 'Data-status update · No market signal')
+                COLORS['recovered'], now, 'Data-status update · No market signal', art='compact')
 
 
 def followup_card(config, detail, observations):

@@ -7,6 +7,7 @@ import re
 import time
 from urllib.parse import urlparse, urlunparse
 
+from .branding import ICON_URL, WEBHOOK_NAME
 from .http import RemoteError
 from .presentation import validate_presentation
 
@@ -61,6 +62,8 @@ def send(route, text, client, presentation=None):
         else:
             try:
                 payload['embeds'] = [validate_presentation(presentation)]
+                if presentation['format'] == 'tokn-card-v2':
+                    payload.update(username=WEBHOOK_NAME, avatar_url=ICON_URL)
             except (ValueError, TypeError, KeyError, OverflowError):
                 raise RemoteError('invalid_presentation') from None
         response = client.call(route.endpoint + '?wait=true', payload)

@@ -1,5 +1,13 @@
 # Tokn Market Watch message system
 
+## Existing Tokn identity
+
+New Discord messages use the original Tokn coin as the webhook avatar and author icon, with the sender name **Tokn Market Watch**. Alerts and follow-ups add a coin thumbnail. Scheduled paid briefs and the free sample include the existing circuit-board banner after their evidence. Data-health cards use the small icon alone to stay compact.
+
+The primary accent is **Tokn electric blue `#2D73FF`**, taken from the existing global CSS (`rgba(45,115,255,...)`). Rose, amber, violet, slate and mint retain their message/status meanings. Discord controls native card backgrounds and fonts; no custom CSS is sent to Discord. The preview's navy page frame is presentation only. No additional paid API, host, image generation or rendering service is required.
+
+Assets come from `ToknNews/ToknNews-Full_Backup` at commit `70fcd4b37147acbb34294b5086d597d7d04bf2ce`. See `assets/README.md` for exact original paths and checksums. Images are reused unchanged. Production embeds reference commit-pinned public GitHub media URLs (these source files use Git LFS); do not substitute raw pointer-file URLs. Discord fetches the art. The worker does not download images or send secrets to the image host. Keeping those public source assets available is required for artwork rendering; market evidence remains text in the embed. Local copies make the preview fully offline.
+
 ## Voice and hierarchy
 
 Use a direct, slightly informal market-desk voice. Lead with a useful interpretation, then explain what the reader should check and show the evidence. **The read** explains the observation. **Your next check** gives a concrete research action. **Recheck rule** shows the actual configured thresholds and what would make the condition stop qualifying. These are snapshot conditions, not validated trade entry, stop-loss or profit-target levels.
@@ -24,13 +32,13 @@ Discord uses one native embed with vertically stacked fields. Telegram and the e
 
 | Type | Headline example | Accent | Contents |
 | --- | --- | --- | --- |
-| Price/OI expansion | BTC · PRICE ↑ / OI ↑ | Cyan | Price up, coin-unit OI up, venue readings and conditional interpretation |
+| Price/OI expansion | BTC · PRICE ↑ / OI ↑ | Tokn blue | Price up, coin-unit OI up, venue readings and conditional interpretation |
 | Price decline/OI expansion | BTC · PRICE ↓ / OI ↑ | Rose | Price down, coin-unit OI up; no promise of continued downside |
 | Elevated positive funding | BTC · LONGS PAYING UP | Amber | Positive funding estimates, price/OI context where available |
 | Elevated negative funding | BTC · SHORTS PAYING UP | Amber | Negative funding estimates, without asserting a rebound |
 | Funding divergence | BTC · FUNDING SPLIT | Violet | Venue rates plus their difference in basis points |
-| Follow-up | BTC · CONDITION HOLDS / CONDITION FADED / CHECK PAUSED / WATCH ENDED | Cyan / Slate / Amber | Original reference, actual check time, rolling rule status and separate changes since the original alert |
-| Paid brief | AM BRIEF / PM BRIEF | Cyan | BTC, ETH and SOL sections, an opening interpretation, source coverage, available price/OI changes |
+| Follow-up | BTC · CONDITION HOLDS / CONDITION FADED / CHECK PAUSED / WATCH ENDED | Tokn blue / Slate / Amber | Original reference, actual check time, rolling rule status and separate changes since the original alert |
+| Paid brief | AM BRIEF / PM BRIEF | Tokn blue | BTC, ETH and SOL sections, an opening interpretation, source coverage, available price/OI changes |
 | Public sample | FREE LOOK · BTC | Slate | BTC measurements only, plus a short description of full-feed coverage |
 | Data health | DATA CHECK · COVERAGE LIMITED / RESTORED | Amber / Mint | Affected coverage and whether measurements can be used |
 
@@ -50,7 +58,7 @@ The subscriber-value roadmap and validation experiment are in `SUBSCRIBER_VALUE.
 
 ## Preview
 
-`MESSAGE_PREVIEW.html` is a self-contained, responsive design preview with a selector for fourteen examples, including five follow-up alternatives. All example values and timestamps are fictional and each card is labeled DEMO. It has no credentials, network requests, trackers or posting controls. Its layout is illustrative; Discord's exact typography and wrapping vary by device.
+`MESSAGE_PREVIEW.html` is a self-contained, responsive design preview with a selector for fourteen examples, including five follow-up alternatives. All example values and timestamps are fictional and each card is labeled DEMO. It has no credentials, network requests, trackers or posting controls. It embeds all three original images. Its layout is illustrative; Discord's exact typography, wrapping and image placement vary by device and theme.
 
 ```bash
 # Enter the installed project.
@@ -74,7 +82,7 @@ python3 -m market_watch.message_preview --format json
 
 ## Rollout to the private feed
 
-For the current follow-through release, follow `FOLLOW_THROUGH.md`, which includes a pre-migration backup. The older formatting-only commands below are insufficient for that first schema upgrade.
+If follow-through is already installed and the database is at schema 2, this branding update needs no further migration. If upgrading from before follow-through, first use `FOLLOW_THROUGH.md`, which includes the required pre-migration backup.
 
 These steps pause collection briefly so a running process cannot import a mixture of old and new files. They preserve the runtime configuration, webhook, database and delivery switches. Stop if any command fails; do not resume with failing tests.
 
@@ -89,7 +97,7 @@ sudo systemctl stop tokn-market-watch.timer tokn-market-watch.service
 ```
 
 ```bash
-# Fast-forward to the tested formatting update.
+# Fast-forward to the tested branding update.
 git pull --ff-only origin feature/tokn-market-watch
 ```
 
@@ -113,11 +121,11 @@ sudo systemctl start tokn-market-watch.service
 sudo python3 -m market_watch --config config/market_watch.json --database /var/lib/tokn-market-watch/state.sqlite3 check
 ```
 
-Presentation is stored in event evidence. The original formatting-only release needed no migration; the current follow-through release migrates to schema 2 as documented in `FOLLOW_THROUGH.md`. Existing archived/pending events keep their original text. A message appears only when a real alert or brief is due. Verify the first new Discord card and its receipt in the private channel before expanding access.
+Presentation is stored in event evidence. Branding uses presentation format `tokn-card-v2`; the database remains schema 2. Existing archived/pending v1 cards keep their original formatting and sender behavior. Previously posted messages are not edited. New v2 cards override the sender name/avatar per message, without changing the webhook configuration. A message appears only when a real alert or brief is due. Verify the first new Discord card and its receipt in the private channel before expanding access.
 
 ## Payload checks
 
-Discord presentation is a restricted, link-free embed: title, description, author name, stacked fields, footer, color and timestamp. It is validated against field and total character limits before sending. Allowed mentions remain empty and `wait=true` still supplies a delivery receipt. Oversized or malformed cards fail closed instead of dropping evidence through truncation. Telegram gets the plain-text version without Discord formatting syntax.
+Discord presentation is a restricted embed: title, description, author, stacked fields, footer, color and timestamp. V2 additionally permits only the exact approved Tokn author icon, coin thumbnail and banner URLs. Arbitrary image URLs, redirects via query strings, extra link fields and unpinned branch URLs are rejected. Legacy v1 remains link-free. Both versions are validated against field and total character limits before sending. Allowed mentions remain empty and `wait=true` still supplies a delivery receipt. Oversized or malformed cards fail closed instead of dropping evidence through truncation. Telegram gets the plain-text version without Discord formatting syntax.
 
 Official API references:
 - https://docs.discord.com/developers/resources/webhook#execute-webhook
