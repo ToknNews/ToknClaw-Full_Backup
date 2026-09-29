@@ -1,0 +1,30 @@
+{
+  "assets": [
+    "BTC",
+    "ETH",
+    "SOL"
+  ],
+  "venues": [
+    "hyperliquid",
+    "okx"
+  ],
+  "minimum_venues": 2,
+  "database": "market_watch/runtime/state.sqlite3",
+  "timezone": "America/New_York",
+  "summary_hours": [
+    8,
+    20
+  ],
+  "free_summary_hour": 8,
+  "lookback_minutes": 15,
+  "cooldown_minutes": 60,
+  "max_alerts_per_hour": 6,
+  "price_change_pct": 0.75,
+  "oi_change_pct": 2.0,
+  "funding_extreme_bps_8h": 3.0,
+  "funding_spread_bps_8h": 2.0,
+  "followup_enabled": true,
+  "followup_check_minutes": 5,
+  "followup_horizon_minutes": 60,
+  "followup_max_updates": 4
+}

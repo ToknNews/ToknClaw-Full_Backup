@@ -1,0 +1,24 @@
+[Unit]
+Description=Tokn Market Watch collection and optional delivery
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+WorkingDirectory=/opt/tokn-market-watch
+EnvironmentFile=/etc/tokn-market-watch.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m market_watch --config config/market_watch.json run $MARKET_WATCH_DELIVERY_ARGS
+StateDirectory=tokn-market-watch
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=180
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryMax=256M
+SuccessExitStatus=2
