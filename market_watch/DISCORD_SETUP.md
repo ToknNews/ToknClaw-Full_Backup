@@ -38,4 +38,44 @@ A successful response has `status: sent` and a Discord `message_id`. Verify that
 
 Rerunning a successful test returns its existing receipt without sending a duplicate. An interrupted or ambiguous send returns `unknown` and blocks further sends to that same webhook; inspect Discord before any operator reconciliation. A definite rejection returns `failed`. A 429 records a retry deadline and cannot be retried before that deadline. Do not delete the test archive to bypass uncertain delivery. Rotating to a different webhook creates a separate test identity.
 
-Scheduled publishing remains disabled. After the channel identity and permissions are verified, follow the main README's explicit activation step to enable market messages. A receipt for this connection test is not a receipt for a market alert. Preserve the archived observations while completing the private pilot and subscription/access tests.
+## Activate the verified private feed
+
+After verifying the test message in the intended private channel, run the following explicit activation command. It requires a successful saved connection-test receipt for the configured webhook and exactly one Discord paid/test route. It backs up and atomically replaces the private environment file, changing both scheduled-delivery switches together. It does not test Discord channel permissions; verify those in Discord before activation.
+
+```bash
+# Enter the installed project.
+cd /opt/tokn-market-watch
+```
+
+```bash
+# Enable actual scheduled market messages to the verified private channel.
+sudo python3 -m market_watch.discord_setup enable
+```
+
+The next timer invocation reads the new settings; no daemon reload is required for an environment-file change. The following command waits for one service cycle, coalescing with a cycle already in progress. A cycle already running at activation may still have the old environment; the next scheduled cycle will use the new file.
+
+```bash
+# Start one collection/publishing cycle and wait for completion.
+sudo systemctl start tokn-market-watch.service
+```
+
+```bash
+# Inspect recent cycle output for sending_enabled and delivery outcomes.
+sudo journalctl -u tokn-market-watch.service -n 100 --no-pager -o cat
+```
+
+```bash
+# Check source health and delivery failures against the production archive.
+sudo python3 -m market_watch --config config/market_watch.json --database /var/lib/tokn-market-watch/state.sqlite3 check
+```
+
+No market message is guaranteed immediately: events require qualifying market conditions, or the configured 08:00/20:00 America/New_York digest window. The connection-test receipt lives in a separate archive and does not count as a market-message delivery. Confirm actual market content and receipts during the private pilot before opening paid access.
+
+To pause publishing while collection continues:
+
+```bash
+# Disable publishing for future service invocations; retain the webhook and data collection.
+sudo python3 -m market_watch.discord_setup disable
+```
+
+A cycle already running may finish a send with settings it previously loaded. If an immediate stop is needed, use the main README's command to stop both the timer and service. Do not rerun the connection test against an active publisher; it is restricted to collection-only mode.

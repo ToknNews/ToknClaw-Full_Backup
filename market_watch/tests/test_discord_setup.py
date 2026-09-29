@@ -156,6 +156,79 @@ class DiscordSetupTests(unittest.TestCase):
         self.assertNotIn('SECRET', output.getvalue())
         self.assertEqual(self.path.read_text(), self.original)
 
+    def test_enable_requires_existing_test_receipt_without_creating_database(self):
+        discord_setup.configure(self.path, WEBHOOK)
+        original = self.path.read_text()
+        with self.assertRaises(ValueError):
+            discord_setup.set_publishing(self.path, self.database, enabled=True)
+        self.assertEqual(self.path.read_text(), original)
+        self.assertFalse(self.database.exists())
+
+    def test_enable_and_disable_preserve_webhook_and_private_backups(self):
+        discord_setup.configure(self.path, WEBHOOK)
+        client = Client({'id': 'message-123'})
+        discord_setup.connection_test(self.route, self.database, client)
+        result = discord_setup.set_publishing(self.path, self.database, enabled=True)
+        self.assertTrue(result['scheduled_publishing'])
+        _, values = discord_setup.read_environment(self.path, require_collection_only=False)
+        self.assertEqual(values['MARKET_WATCH_ENABLE_DELIVERY'], '1')
+        self.assertEqual(values['MARKET_WATCH_DELIVERY_ARGS'], '--send')
+        self.assertEqual(values['MARKET_WATCH_DISCORD_PAID_WEBHOOK'], WEBHOOK)
+        self.assertEqual(Path(result['backup']).stat().st_mode & 0o777, 0o600)
+        with self.assertRaises(ValueError):
+            discord_setup.read_environment(self.path)
+        repeated = discord_setup.set_publishing(self.path, self.database, enabled=True)
+        self.assertTrue(repeated['already_configured'])
+        disabled = discord_setup.set_publishing(self.path, self.database, enabled=False)
+        self.assertFalse(disabled['scheduled_publishing'])
+        _, values = discord_setup.read_environment(self.path)
+        self.assertEqual(values['MARKET_WATCH_DISCORD_PAID_WEBHOOK'], WEBHOOK)
+        self.assertEqual(values['MARKET_WATCH_DELIVERY_ARGS'], '')
+        self.assertEqual(len(client.calls), 1)
+
+    def test_enable_rejects_uncertain_or_different_destination(self):
+        discord_setup.configure(self.path, WEBHOOK)
+        client = Client(RemoteError('network_failure', ambiguous=True))
+        discord_setup.connection_test(self.route, self.database, client)
+        with self.assertRaises(ValueError):
+            discord_setup.set_publishing(self.path, self.database, enabled=True)
+        discord_setup.configure(self.path, 'https://discord.com/api/webhooks/456/another-token')
+        with self.assertRaises(ValueError):
+            discord_setup.set_publishing(self.path, self.database, enabled=True)
+        self.assertEqual(discord_setup.read_environment(self.path)[1]['MARKET_WATCH_ENABLE_DELIVERY'], '0')
+
+    def test_enable_never_activates_additional_untested_routes(self):
+        discord_setup.configure(self.path, WEBHOOK)
+        discord_setup.connection_test(self.route, self.database, Client({'id': 'message-123'}))
+        text = self.path.read_text().replace('MARKET_WATCH_DISCORD_FREE_WEBHOOK=',
+            'MARKET_WATCH_DISCORD_FREE_WEBHOOK=https://discord.com/api/webhooks/456/another-token')
+        self.path.write_text(text)
+        with self.assertRaises(ValueError):
+            discord_setup.set_publishing(self.path, self.database, enabled=True)
+        self.assertEqual(self.path.read_text(), text)
+
+    def test_disable_needs_no_receipt_and_is_idempotent(self):
+        self.path.write_text(self.original.replace('MARKET_WATCH_ENABLE_DELIVERY=0',
+            'MARKET_WATCH_ENABLE_DELIVERY=1').replace('MARKET_WATCH_DELIVERY_ARGS=',
+            'MARKET_WATCH_DELIVERY_ARGS=--send'))
+        result = discord_setup.set_publishing(self.path, self.database, enabled=False)
+        self.assertFalse(result['scheduled_publishing'])
+        self.assertFalse(self.database.exists())
+        self.assertTrue(discord_setup.set_publishing(self.path, self.database, enabled=False)['already_configured'])
+
+    def test_cli_enable_uses_saved_receipt_without_new_network_call(self):
+        discord_setup.configure(self.path, WEBHOOK)
+        discord_setup.connection_test(self.route, self.database, Client({'id': 'message-123'}))
+        with patch.object(discord_setup, 'ENVIRONMENT', self.path), \
+                patch.object(discord_setup, 'TEST_DATABASE', self.database), \
+                patch.object(discord_setup.os, 'geteuid', return_value=0), \
+                patch.object(discord_setup, 'connection_test') as send_test, \
+                redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(discord_setup.main(['enable']), 0)
+        send_test.assert_not_called()
+        self.assertTrue(json.loads(output.getvalue())['scheduled_publishing'])
+        self.assertNotIn('test-only-token', output.getvalue())
+
 
 if __name__ == '__main__':
     unittest.main()

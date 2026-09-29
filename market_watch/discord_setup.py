@@ -32,7 +32,7 @@ TEST_MESSAGE = (
 )
 
 
-def read_environment(path):
+def read_environment(path, *, require_collection_only=True):
     """Read our unquoted environment schema without executing shell content."""
     with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), 'r') as handle:
         info = os.fstat(handle.fileno())
@@ -51,25 +51,21 @@ def read_environment(path):
         values[key] = value
     if set(values) != set(KEYS):
         raise ValueError('environment file is missing expected settings')
-    if (values['MARKET_WATCH_ENABLE_DELIVERY'] != '0'
+    if (values['MARKET_WATCH_ENABLE_DELIVERY'] not in {'0', '1'}
+            or values['MARKET_WATCH_DELIVERY_ARGS'] not in {'', '--send'}):
+        raise ValueError('unsupported publishing switch values')
+    if require_collection_only and (values['MARKET_WATCH_ENABLE_DELIVERY'] != '0'
             or values['MARKET_WATCH_DELIVERY_ARGS']):
         raise ValueError('setup requires collection-only mode: delivery=0 and empty delivery args')
     return original, values
 
 
-def configure(path, webhook):
-    original, values = read_environment(path)
-    webhook = webhook.strip()
-    if any(c.isspace() or ord(c) < 32 for c in webhook):
-        raise ValueError('webhook must be a single URL without embedded whitespace')
-    values['MARKET_WATCH_DISCORD_PAID_WEBHOOK'] = webhook
-    routes = routes_from_env(values)
-    if not any(r.platform == 'discord' and r.audience == 'paid' for r in routes):
-        raise ValueError('a private test-channel Discord webhook is required')
+def replace_environment(path, original, values, reason):
+    """Write a complete private replacement, retaining the previous file."""
     replacement = '# Private runtime settings. Do not commit this file.\n'
     replacement += '\n'.join(key + '=' + values[key] for key in KEYS) + '\n'
     # Preserve the complete old file before atomically replacing it.
-    backup_fd, backup_name = tempfile.mkstemp(prefix=path.name + '.before-discord-', dir=path.parent)
+    backup_fd, backup_name = tempfile.mkstemp(prefix=path.name + '.before-' + reason + '-', dir=path.parent)
     with os.fdopen(backup_fd, 'w') as backup:
         backup.write(original)
         backup.flush()
@@ -84,7 +80,45 @@ def configure(path, webhook):
     finally:
         if os.path.exists(new_name):
             os.unlink(new_name)
-    return {'configured': True, 'scheduled_publishing': False, 'backup': backup_name}
+    return backup_name
+
+
+def configure(path, webhook):
+    original, values = read_environment(path)
+    webhook = webhook.strip()
+    if any(c.isspace() or ord(c) < 32 for c in webhook):
+        raise ValueError('webhook must be a single URL without embedded whitespace')
+    values['MARKET_WATCH_DISCORD_PAID_WEBHOOK'] = webhook
+    routes = routes_from_env(values)
+    if not any(r.platform == 'discord' and r.audience == 'paid' for r in routes):
+        raise ValueError('a private test-channel Discord webhook is required')
+    backup = replace_environment(path, original, values, 'discord')
+    return {'configured': True, 'scheduled_publishing': False, 'backup': backup}
+
+
+def set_publishing(path, database, *, enabled):
+    """Explicitly activate only a tested Discord paid route, or pause publishing."""
+    original, values = read_environment(path, require_collection_only=False)
+    if enabled:
+        routes = routes_from_env(values)
+        if len(routes) != 1 or routes[0].platform != 'discord' or routes[0].audience != 'paid':
+            raise ValueError('enable requires exactly one private Discord paid/test route')
+        if not database.is_file():
+            raise ValueError('send and verify the private-channel connection test first')
+        store = Store(database, readonly=True)
+        try:
+            receipt = store.get_meta('discord-connection-test:' + routes[0].name)
+        finally:
+            store.close()
+        if not receipt or receipt.get('status') != 'sent' or not receipt.get('message_id'):
+            raise ValueError('this webhook has no successful connection-test receipt')
+    flag, arguments = ('1', '--send') if enabled else ('0', '')
+    if values['MARKET_WATCH_ENABLE_DELIVERY'] == flag and values['MARKET_WATCH_DELIVERY_ARGS'] == arguments:
+        return {'scheduled_publishing': enabled, 'already_configured': True}
+    values['MARKET_WATCH_ENABLE_DELIVERY'] = flag
+    values['MARKET_WATCH_DELIVERY_ARGS'] = arguments
+    backup = replace_environment(path, original, values, 'enable' if enabled else 'disable')
+    return {'scheduled_publishing': enabled, 'backup': backup}
 
 
 def connection_test(route, database, client, clock=time.time):
@@ -129,6 +163,8 @@ def main(argv=None):
     sub.add_parser('configure', help='save a hidden webhook input; keep scheduled publishing disabled')
     test = sub.add_parser('test', help='preview or explicitly send one labeled connection test')
     test.add_argument('--send', action='store_true', help='send to the configured private test channel')
+    sub.add_parser('enable', help='enable scheduled messages after verifying the tested private channel')
+    sub.add_parser('disable', help='disable future scheduled publishing; preserve data collection')
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
         print(json.dumps({'error': 'run this operator command with sudo'}))
@@ -141,6 +177,8 @@ def main(argv=None):
                 warnings.simplefilter('error', getpass.GetPassWarning)
                 webhook = getpass.getpass('Paste the PRIVATE TEST CHANNEL webhook URL (hidden): ')
             output = configure(ENVIRONMENT, webhook)
+        elif args.command in {'enable', 'disable'}:
+            output = set_publishing(ENVIRONMENT, TEST_DATABASE, enabled=args.command == 'enable')
         else:
             _, values = read_environment(ENVIRONMENT)
             routes = [r for r in routes_from_env(values) if r.platform == 'discord' and r.audience == 'paid']
@@ -155,7 +193,7 @@ def main(argv=None):
     except (OSError, ValueError, RuntimeError, sqlite3.Error, EOFError,
             KeyboardInterrupt, getpass.GetPassWarning):
         # No URLs, file contents, traceback, or third-party response bodies.
-        print(json.dumps({'error': 'setup failed; verify private config permissions, collection-only settings and the webhook format'}))
+        print(json.dumps({'error': 'setup failed; verify private config permissions, publishing switches, route format and test receipt'}))
         return 1
 
 
