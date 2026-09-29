@@ -7,7 +7,7 @@ from market_watch.delivery import Route, dispatch, send
 from market_watch.engine import market_alerts, summaries
 from market_watch.http import RemoteError
 from market_watch.message_preview import examples, render_html
-from market_watch.presentation import COLORS, alert_card, validate_presentation, venue_lines
+from market_watch.presentation import COLORS, alert_card, brief_read, recheck_rule, validate_presentation, venue_lines
 from market_watch.storage import Store
 from test_market_watch import DISCORD, FakeClient, NOW, StoreCase, observation
 
@@ -87,6 +87,55 @@ class PresentationTests(StoreCase):
         text, _ = alert_card(self.cfg, 'positive_funding', 'BTC', rows, [], NOW)
         self.assertIn('08:02 AM EDT', text)
         self.assertIn('UTC', text)
+
+    def test_recheck_criteria_use_custom_thresholds_without_rounding_them_away(self):
+        cfg = replace(self.cfg, lookback_minutes=30, price_change_pct=1.125,
+                      oi_change_pct=3.25, funding_extreme_bps_8h=4.5,
+                      funding_spread_bps_8h=2.125)
+        self.assertIn('Price ≥ +1.125%', recheck_rule(cfg, 'price_oi_up'))
+        self.assertIn('Price ≤ -1.125%', recheck_rule(cfg, 'price_oi_down'))
+        self.assertIn('OI ≥ +3.25%', recheck_rule(cfg, 'price_oi_up'))
+        self.assertIn('~30m', recheck_rule(cfg, 'price_oi_up'))
+        self.assertIn('≥ +0.045%', recheck_rule(cfg, 'positive_funding'))
+        self.assertIn('≤ -0.045%', recheck_rule(cfg, 'negative_funding'))
+        self.assertIn('≥ 2.125 bps', recheck_rule(cfg, 'funding_divergence'))
+
+    def test_brief_read_agrees_with_engine_on_direction_mixed_data_and_thresholds(self):
+        self.add_history()
+        cases = [
+            ((102, 102), (1040, 1040), 'Rally + rising OI.', 'price_oi_up'),
+            ((98, 98), (1040, 1040), 'Selloff + rising OI.', 'price_oi_down'),
+            ((102, 98), (1040, 1040), 'No shared price/OI trigger', None),
+            ((102, 102), (1040, 990), 'No shared price/OI trigger', None),
+            ((100.5, 100.5), (1040, 1040), 'No shared price/OI trigger', None),
+        ]
+        for prices, oi, expected, rule in cases:
+            rows = [observation(v, price=p, oi=o) for v, p, o in zip(self.cfg.venues, prices, oi)]
+            with self.subTest(prices=prices, oi=oi):
+                events = market_alerts(self.cfg, self.store, rows, NOW)
+                brief = summaries(replace(self.cfg, summary_hours=(8,)), self.store, rows, {}, NOW)[0]
+                self.assertIn(expected, brief.text)
+                self.assertEqual([e.evidence['rule'] for e in events], [rule] if rule else [])
+
+    def test_brief_read_distinguishes_missing_coverage_from_missing_baselines(self):
+        rows = [observation(v, bps=5) for v in self.cfg.venues]
+        self.assertEqual(brief_read(self.cfg, rows[:1], []), 'Coverage incomplete. Analysis paused.')
+        read = brief_read(self.cfg, rows, [])
+        self.assertIn('needs a valid baseline', read)
+        self.assertIn('Longs face elevated funding costs.', read)
+        self.assertNotIn('No shared price/OI trigger', read)
+        self.assertNotIn('Rally', read)
+
+    def test_funding_brief_context_agrees_with_alert_rules_without_price_baselines(self):
+        for rates, expected in [((5, 5), 'Longs face elevated funding costs.'),
+                                ((-5, -5), 'Shorts face elevated funding costs.'),
+                                ((1, 5), 'Funding differs across venues.')]:
+            rows = [observation(v, bps=b) for v, b in zip(self.cfg.venues, rates)]
+            with self.subTest(rates=rates):
+                self.assertEqual(len(market_alerts(self.cfg, self.store, rows, NOW)), 1)
+                brief = summaries(replace(self.cfg, summary_hours=(8,)), self.store, rows, {}, NOW)[0]
+                self.assertIn(expected, brief.text)
+                self.assertIn('needs a valid baseline', brief.text)
 
     def test_embed_survives_archive_restart_and_uses_receipt_delivery(self):
         self.add_history()

@@ -102,7 +102,7 @@ h1{font-size:38px;line-height:1.15;letter-spacing:-1.4px;margin:12px 0}.intro{co
 footer{border-top:1px solid #343b45;margin-top:20px;padding-top:12px;color:#909cab;font-size:10px;line-height:1.5}.fine{margin-top:30px;color:#7d8896;font-size:12px}
 [hidden]{display:none!important}@media(max-width:760px){.page{padding:26px 16px}h1{font-size:30px}.grid{grid-template-columns:1fr}.card{padding:18px 16px}.toolbar{flex-wrap:wrap}.field p{font-size:12px}}
 </style></head><body><main class="page"><div class="eyebrow">TOKN / MARKET WATCH</div>
-<h1>Read the market. Skip the noise.</h1><p class="intro">A compact message system for positioning alerts, market briefs and source-health updates. Discord uses native cards; Telegram gets the same information as plain text.</p>
+<h1>Read the market. Skip the noise.</h1><p class="intro">What changed. Why it matters. What to check next. Current rule thresholds make each interpretation reviewable. Discord uses native cards; Telegram gets the same information as plain text.</p>
 <div class="notice">DESIGN PREVIEW · ALL MARKET VALUES ARE FICTIONAL</div>
 <div class="toolbar"><label for="kind">Preview a message</label><select id="kind"><option value="all">All formats</option>''' + options + '''</select></div>
 <div class="grid">''' + ''.join(cards) + '''</div><p class="fine">Illustrative layout. Discord fonts, wrapping and timestamp placement vary by device. Colors identify message types, not confidence or expected returns. No network calls, webhooks or tracking are embedded in this preview.</p></main>

@@ -9,28 +9,38 @@ COLORS = {'up': 0x38BDF8, 'down': 0xFB7185, 'funding': 0xFBBF24,
           'spread': 0xA78BFA, 'brief': 0x38BDF8, 'sample': 0x94A3B8,
           'degraded': 0xFBBF24, 'recovered': 0x34D399}
 VENUES = {'hyperliquid': 'Hyperliquid', 'okx': 'OKX'}
-FOOTER = 'OI changes use coin units. Funding: 8h equivalent estimates. Market monitoring only.'
+FOOTER = 'Snapshot criteria, not entry/exit levels. OI: coin units. Funding: 8h equivalent estimates.'
 ALERT_COPY = {
     'price_oi_up': ('PRICE ↑ / OI ↑', 'up',
-        'Price up. Positioning up.',
-        'Open interest is expanding alongside price. This does not identify whether new positions are longs or shorts.',
-        'Watch whether price and open interest keep rising together.'),
+        'Price is climbing. Open interest is building with it.',
+        'There are more open contracts during the rally. This adds positioning context, '
+        'but does not identify whether buyers or sellers initiated them.',
+        'For a continuation thesis, look for the same pattern in a fresh reading. '
+        'A price retrace with OI still elevated is a reason to reassess.'),
     'price_oi_down': ('PRICE ↓ / OI ↑', 'down',
-        'Price down. Positioning up.',
-        'Open interest is expanding during the drop. That alone does not establish continued downside.',
-        'Watch whether open interest keeps expanding as price falls, or the pattern breaks.'),
+        'The selloff is adding open contracts.',
+        'Price is falling while open interest expands. New short pressure is one possible '
+        'explanation; these inputs cannot establish it.',
+        'For downside continuation, check whether price keeps falling while OI expands. '
+        'A price rebound with OI still elevated changes that read.'),
     'positive_funding': ('LONGS PAYING UP', 'funding',
-        'Positive funding is elevated across the covered venues.',
-        'At these estimated rates, longs pay shorts. Positive funding alone does not establish a reversal.',
-        'Watch whether funding cools or stays elevated alongside price and open interest.'),
+        'Longs face elevated estimated funding costs.',
+        'Longs would pay shorts at the displayed estimates. That affects carry cost; '
+        'it does not time a reversal.',
+        'Before holding through settlement, check the venue’s actual funding interval and '
+        'current rate. Reassess the carry cost if rates cool.'),
     'negative_funding': ('SHORTS PAYING UP', 'funding',
-        'Negative funding is elevated across the covered venues.',
-        'At these estimated rates, shorts pay longs. Negative funding alone does not establish a rebound.',
-        'Watch whether funding moves toward zero or stays negative as price changes.'),
+        'Shorts face elevated estimated funding costs.',
+        'Shorts would pay longs at the displayed estimates. That affects carry cost; '
+        'it does not time a rebound.',
+        'Before holding through settlement, check the venue’s actual funding interval and '
+        'current rate. Reassess the carry cost if rates move toward zero.'),
     'funding_divergence': ('FUNDING SPLIT', 'spread',
-        'The venues are pricing funding differently.',
-        'Rates differ on the same 8h basis. Fees, basis moves and changing rates can outweigh the gap.',
-        'Watch whether the funding gap widens or narrows across fresh readings.'),
+        'Same asset. Different estimated funding costs.',
+        'Venue choice changes the estimated carry cost. The displayed gap is a comparison, '
+        'not locked-in arbitrage.',
+        'Compare actual settlement intervals, fees and basis before using the gap. '
+        'Recheck both rates together; either can change before settlement.'),
 }
 
 
@@ -118,26 +128,75 @@ def card(title, description, fields, color, now, footer=FOOTER):
     return text, presentation
 
 
+def recheck_rule(config, rule):
+    """Describe the existing rule, without inventing entries or future outcomes."""
+    minimum = config.minimum_venues
+    if rule in {'price_oi_up', 'price_oi_down'}:
+        direction = f'≥ {config.price_change_pct:+}%' if rule == 'price_oi_up' else f'≤ {-config.price_change_pct:+}%'
+        return (f'Price {direction} and OI ≥ {config.oi_change_pct:+}% on every compared venue '
+                f'(~{config.lookback_minutes}m; at least {minimum} valid baselines). '
+                'A fresh comparison outside either threshold breaks this pattern. '
+                'Missing coverage leaves it unconfirmed.')
+    if rule in {'positive_funding', 'negative_funding'}:
+        threshold = config.funding_extreme_bps_8h / 100
+        condition = f'≥ {threshold:+}%' if rule == 'positive_funding' else f'≤ {-threshold:+}%'
+        return (f'Funding {condition} / 8h eq. on every covered venue '
+                f'(at least {minimum} fresh venues). A fresh rate outside that threshold '
+                'ends the shared funding condition. Missing coverage leaves it unconfirmed.')
+    if rule == 'funding_divergence':
+        return (f'Highest minus lowest funding ≥ {config.funding_spread_bps_8h} bps / 8h eq. '
+                f'(at least {max(2, minimum)} fresh venues). A smaller gap no longer qualifies. '
+                'Missing coverage leaves it unconfirmed.')
+    raise ValueError('unsupported alert rule')
+
+
 def alert_card(config, rule, asset, observations, comparisons, now):
     headline, accent, hook, interpretation, watch = ALERT_COPY[rule]
     changes = {row['venue']: row for row in comparisons}
     coverage = f'{len(observations)}/{len(config.venues)} fresh venues'
-    context = f'~{config.lookback_minutes}m window' if rule.startswith('price_oi') else 'Current funding estimates'
-    fields = [(VENUES[obs.venue], venue_lines(obs, changes.get(obs.venue), config.lookback_minutes))
-              for obs in sorted(observations, key=lambda row: row.venue)]
+    context = (f'~{config.lookback_minutes}m window · {len(changes)} valid baselines'
+               if rule.startswith('price_oi') else 'Current funding estimates')
+    fields = [('The read', interpretation), ('Your next check', watch),
+              ('Recheck rule', recheck_rule(config, rule))]
+    fields += [(VENUES[obs.venue], venue_lines(obs, changes.get(obs.venue), config.lookback_minutes))
+               for obs in sorted(observations, key=lambda row: row.venue)]
     if rule == 'funding_divergence':
         gap = max(o.funding_bps_8h for o in observations) - min(o.funding_bps_8h for o in observations)
         fields.append(('Funding gap · 8h equivalent', f'{gap:.2f} bps · 1 bp = 0.01 percentage points'))
-    fields += [('The read', interpretation), ('Watch next', watch)]
     return card(asset + ' · ' + headline,
                 hook + '\n' + context + ' · ' + coverage + '\n' + local_stamp(now, config.timezone),
                 fields, COLORS[accent], now)
 
 
+def brief_read(config, group, comparisons):
+    """Current rule context only: no ranking, forecast or cross-asset evidence."""
+    if len(group) < config.minimum_venues:
+        return 'Coverage incomplete. Analysis paused.'
+    venues = {o.venue for o in group}
+    changes = [r for r in comparisons if r['venue'] in venues]
+    if len(changes) < config.minimum_venues:
+        parts = ['Price/OI read needs a valid baseline.']
+    elif all(r['oi_base_pct'] >= config.oi_change_pct for r in changes) and all(r['price_pct'] >= config.price_change_pct for r in changes):
+        parts = ['Rally + rising OI. Watch for persistence.']
+    elif all(r['oi_base_pct'] >= config.oi_change_pct for r in changes) and all(r['price_pct'] <= -config.price_change_pct for r in changes):
+        parts = ['Selloff + rising OI. Watch for persistence.']
+    else:
+        parts = ['No shared price/OI trigger at the configured thresholds.']
+    funding = [o.funding_bps_8h for o in group]
+    if all(rate >= config.funding_extreme_bps_8h for rate in funding):
+        parts.append('Longs face elevated funding costs.')
+    elif all(rate <= -config.funding_extreme_bps_8h for rate in funding):
+        parts.append('Shorts face elevated funding costs.')
+    if len(funding) >= 2 and max(funding) - min(funding) >= config.funding_spread_bps_8h:
+        parts.append('Funding differs across venues.')
+    return ' '.join(parts)
+
+
 def brief_card(config, audience, covered, observations, comparisons, issues, now):
-    fields, available = [], 0
+    fields, reads, available = [], [], 0
     for asset in covered:
         group = sorted((o for o in observations if o.asset == asset), key=lambda row: row.venue)
+        reads.append(asset + ' · ' + brief_read(config, group, comparisons.get(asset, [])))
         if len(group) < config.minimum_venues:
             fields.append((asset, f'{len(group)}/{len(config.venues)} fresh venues · analysis paused.'))
             continue
@@ -147,13 +206,15 @@ def brief_card(config, audience, covered, observations, comparisons, issues, now
         if len(changes) < len(group):
             blocks.append(f'~{config.lookback_minutes}m changes appear when a valid baseline is available.')
         fields.append((asset, '\n\n'.join(blocks)))
+    fields.insert(0, ('At a glance', '\n'.join(reads)))
     local = datetime.fromtimestamp(now, ZoneInfo(config.timezone))
     title = ('AM BRIEF' if local.hour < 12 else 'PM BRIEF') if audience == 'paid' else 'FREE LOOK · ' + ' / '.join(covered)
-    description = local_stamp(now, config.timezone) + f'\nCoverage · {available}/{len(covered)} assets ready'
+    description = ('Start with what changed. Then check the evidence.\n' + local_stamp(now, config.timezone)
+                   + f'\nCoverage · {available}/{len(covered)} assets ready')
     if issues:
         description += '\nSome source measurements are unavailable; affected data is withheld.'
     if audience == 'free':
-        fields.append(('Inside the full feed', 'BTC, ETH and SOL coverage · positioning alerts · twice-daily briefs.'))
+        fields.append(('Inside the full feed', 'BTC, ETH and SOL · live condition alerts · what to check next · morning and evening briefs.'))
     return card(title, description, fields, COLORS['brief' if audience == 'paid' else 'sample'], now)
 
 

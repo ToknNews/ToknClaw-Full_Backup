@@ -2,16 +2,21 @@
 
 ## Voice and hierarchy
 
-Use a direct, slightly informal market-desk voice. The headline states what the data shows. Venue readings provide the evidence. **The read** explains the observation without turning it into an entry or a forecast. **Watch next** identifies what measurement would change the interpretation. Avoid invented confidence scores, win rates, liquidation counts, whale activity and claims about who is opening positions.
+Use a direct, slightly informal market-desk voice. Lead with a useful interpretation, then explain what the reader should check and show the evidence. **The read** explains the observation. **Your next check** gives a concrete research action. **Recheck rule** shows the actual configured thresholds and what would make the condition stop qualifying. These are snapshot conditions, not validated trade entry, stop-loss or profit-target levels.
 
 Every market alert uses this order:
 
 1. Tokn brand and asset/event headline.
-2. Short hook, time window, venue coverage and New York timestamp.
-3. Separate Hyperliquid and OKX measurements.
-4. The read.
-5. Watch next.
-6. A compact units/method note.
+2. Short hook, time window, venue/baseline coverage and New York timestamp.
+3. The read.
+4. Your next check.
+5. Recheck rule, including insufficient-data handling.
+6. Separate Hyperliquid and OKX measurements, and funding gap where relevant.
+7. A compact units/method note.
+
+Briefs start with **At a glance**: an asset-by-asset description of the current price/OI rule context and any funding conditions, before the detailed readings. Missing coverage pauses analysis; missing price/OI baselines are distinguished from a valid comparison with no qualifying pattern. Funding can still be described when its current measurements are valid.
+
+Do not invent confidence scores, win rates, liquidations, whale activity, support/resistance, net new longs/shorts or a causal explanation. A price/OI pattern can justify closer attention; it does not establish future returns. Funding comparisons describe estimated carry, not executable arbitrage. Recheck copy never promises that a follow-up notification exists: automatic condition tracking is a proposed next module, not implemented in this formatter.
 
 Discord uses one native embed with vertically stacked fields. Telegram and the event archive retain readable plain text with the same measurements and interpretations. No generated artwork or paid model calls are needed.
 
@@ -24,7 +29,7 @@ Discord uses one native embed with vertically stacked fields. Telegram and the e
 | Elevated positive funding | BTC · LONGS PAYING UP | Amber | Positive funding estimates, price/OI context where available |
 | Elevated negative funding | BTC · SHORTS PAYING UP | Amber | Negative funding estimates, without asserting a rebound |
 | Funding divergence | BTC · FUNDING SPLIT | Violet | Venue rates plus their difference in basis points |
-| Paid brief | AM BRIEF / PM BRIEF | Cyan | BTC, ETH and SOL sections, source coverage, available price/OI changes |
+| Paid brief | AM BRIEF / PM BRIEF | Cyan | BTC, ETH and SOL sections, an opening interpretation, source coverage, available price/OI changes |
 | Public sample | FREE LOOK · BTC | Slate | BTC measurements only, plus a short description of full-feed coverage |
 | Data health | DATA CHECK · COVERAGE LIMITED / RESTORED | Amber / Mint | Affected coverage and whether measurements can be used |
 
@@ -39,6 +44,8 @@ Colors identify event types, not confidence, trade direction, or expected return
 - Price/OI changes use valid archived baselines around the configured lookback. If a brief lacks one, say it needs a valid baseline; never substitute zero.
 - Withhold an asset's numbers in the brief if fresh coverage is insufficient. A free sample excludes other assets' measurements, comparison history and source-specific issues from its card.
 - Use measured values, fixed templates and deterministic arithmetic. The message formatter does not call an LLM.
+
+The subscriber-value roadmap and validation experiment are in `SUBSCRIBER_VALUE.md`.
 
 ## Preview
 
