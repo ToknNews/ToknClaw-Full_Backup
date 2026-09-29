@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from .rules import matching_rules
+
 
 BRAND = 'TOKN / MARKET WATCH'
 COLORS = {'up': 0x38BDF8, 'down': 0xFB7185, 'funding': 0xFBBF24,
@@ -150,7 +152,7 @@ def recheck_rule(config, rule):
     raise ValueError('unsupported alert rule')
 
 
-def alert_card(config, rule, asset, observations, comparisons, now):
+def alert_card(config, rule, asset, observations, comparisons, now, reference=None):
     headline, accent, hook, interpretation, watch = ALERT_COPY[rule]
     changes = {row['venue']: row for row in comparisons}
     coverage = f'{len(observations)}/{len(config.venues)} fresh venues'
@@ -163,9 +165,10 @@ def alert_card(config, rule, asset, observations, comparisons, now):
     if rule == 'funding_divergence':
         gap = max(o.funding_bps_8h for o in observations) - min(o.funding_bps_8h for o in observations)
         fields.append(('Funding gap · 8h equivalent', f'{gap:.2f} bps · 1 bp = 0.01 percentage points'))
-    return card(asset + ' · ' + headline,
-                hook + '\n' + context + ' · ' + coverage + '\n' + local_stamp(now, config.timezone),
-                fields, COLORS[accent], now)
+    description = hook + '\n' + context + ' · ' + coverage + '\n' + local_stamp(now, config.timezone)
+    if reference:
+        description += '\nWatch ref · ' + reference
+    return card(asset + ' · ' + headline, description, fields, COLORS[accent], now)
 
 
 def brief_read(config, group, comparisons):
@@ -174,20 +177,20 @@ def brief_read(config, group, comparisons):
         return 'Coverage incomplete. Analysis paused.'
     venues = {o.venue for o in group}
     changes = [r for r in comparisons if r['venue'] in venues]
+    rules = matching_rules(config, group, changes)
     if len(changes) < config.minimum_venues:
         parts = ['Price/OI read needs a valid baseline.']
-    elif all(r['oi_base_pct'] >= config.oi_change_pct for r in changes) and all(r['price_pct'] >= config.price_change_pct for r in changes):
+    elif 'price_oi_up' in rules:
         parts = ['Rally + rising OI. Watch for persistence.']
-    elif all(r['oi_base_pct'] >= config.oi_change_pct for r in changes) and all(r['price_pct'] <= -config.price_change_pct for r in changes):
+    elif 'price_oi_down' in rules:
         parts = ['Selloff + rising OI. Watch for persistence.']
     else:
         parts = ['No shared price/OI trigger at the configured thresholds.']
-    funding = [o.funding_bps_8h for o in group]
-    if all(rate >= config.funding_extreme_bps_8h for rate in funding):
+    if 'positive_funding' in rules:
         parts.append('Longs face elevated funding costs.')
-    elif all(rate <= -config.funding_extreme_bps_8h for rate in funding):
+    elif 'negative_funding' in rules:
         parts.append('Shorts face elevated funding costs.')
-    if len(funding) >= 2 and max(funding) - min(funding) >= config.funding_spread_bps_8h:
+    if 'funding_divergence' in rules:
         parts.append('Funding differs across venues.')
     return ' '.join(parts)
 
@@ -236,3 +239,54 @@ def health_card(config, issues, now):
     return card('DATA CHECK · COVERAGE RESTORED', local_stamp(now, config.timezone),
                 [('Status', 'Configured source coverage has recovered. Fresh measurements are available.')],
                 COLORS['recovered'], now, 'Data-status update · No market signal')
+
+
+def followup_card(config, detail, observations):
+    condition, reason = detail['condition'], detail['closed_reason']
+    if reason and reason != 'condition_faded':
+        headline, accent = 'WATCH ENDED', 'sample'
+        ending = {'horizon_elapsed': f"The {config.followup_horizon_minutes}-minute watch window is complete.",
+                  'update_limit': 'The update limit has been reached; this watch is now closed.',
+                  'late_expiry': 'The watch window ended before a timely closing check was available.',
+                  'disabled': 'Follow-through was disabled; this watch is now closed.'}[reason]
+        latest = {'holding': 'The original condition still qualifies at this check.',
+                  'faded': 'The original condition no longer qualifies at this check.',
+                  'unavailable': 'A valid market conclusion is unavailable.'}[condition]
+        read = ending + ' ' + latest
+        next_check = 'Tracking has ended for this alert. A later qualifying alert starts a separate watch.'
+    elif condition == 'faded':
+        headline, accent = 'CONDITION FADED', 'sample'
+        read = 'Fresh readings no longer meet the original rule. This watch is closed.'
+        next_check = 'Reassess the original thesis. A faded condition does not by itself establish a reversal.'
+    elif condition == 'unavailable':
+        headline, accent = 'CHECK PAUSED', 'degraded'
+        read = 'The original condition cannot be verified with the required fresh measurements and baselines.'
+        next_check = 'Treat the condition as unconfirmed until coverage returns. Missing data is not a market reversal.'
+    else:
+        headline = 'COVERAGE BACK · CONDITION HOLDS' if detail['recovered'] else 'CONDITION HOLDS'
+        accent = 'recovered' if detail['recovered'] else 'brief'
+        read = 'The original rule still qualifies at this sampled check. Conditions between checks are not established.'
+        next_check = 'Keep the original scenario on watch and reassess if its conditions change.'
+    fields = [('The update', read), ('Your next check', next_check)]
+    if condition != 'unavailable':
+        changes = {row['venue']: row for row in detail['comparisons']}
+        since = {row['venue']: row for row in detail['since_original']}
+        for obs in observations:
+            delta = since[obs.venue]
+            value = venue_lines(obs, changes.get(obs.venue), config.lookback_minutes)
+            value += (f"\nSince original · Mark {percent(delta['price_pct'])} · OI {percent(delta['oi_base_pct'])}"
+                      f"\nFunding change {delta['funding_delta_bps_8h']:+.2f} bps / 8h eq.")
+            fields.append((VENUES[obs.venue], value))
+        if detail['rule'].startswith('price_oi'):
+            fields.append(('Two different comparisons',
+                           f'The rule uses a rolling ~{config.lookback_minutes}m baseline. '
+                           'Since-original changes use the marks and OI recorded in the initial alert. '
+                           'The rolling pattern can fade while price remains above its original mark.'))
+    fields.append(('Original rule', recheck_rule(config, detail['rule'])))
+    elapsed = (detail['checked_at'] - detail['original_created_at']) / 60
+    description = (ALERT_COPY[detail['rule']][0] + f" · Update {detail['sequence']} · +{elapsed:.1f}m\n"
+                   + local_stamp(detail['checked_at'], config.timezone)
+                   + '\nOriginal · ' + local_stamp(detail['original_created_at'], config.timezone)
+                   + '\nWatch ref · ' + detail['original_id'])
+    return card(detail['asset'] + ' · ' + headline, description, fields, COLORS[accent], detail['checked_at'],
+                'Sampled condition tracking. Mark changes are not trading returns. OI: coin units. Funding: 8h equivalents.')

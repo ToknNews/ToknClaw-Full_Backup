@@ -15,7 +15,7 @@ from test_market_watch import DISCORD, FakeClient, NOW, StoreCase, observation
 class PresentationTests(StoreCase):
     def test_all_demo_formats_fit_discord_and_telegram_limits(self):
         items = examples()
-        self.assertEqual(len(items), 9)
+        self.assertEqual(len(items), 14)
         for item in items:
             with self.subTest(kind=item['kind']):
                 embed = validate_presentation(item['presentation'])

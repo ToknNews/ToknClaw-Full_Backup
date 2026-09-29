@@ -2,14 +2,14 @@
 
 import argparse
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import html
 import json
 
 from .config import Config
 from .models import Observation
-from .presentation import ALERT_COPY, alert_card, brief_card, health_card
+from .presentation import ALERT_COPY, alert_card, brief_card, followup_card, health_card
 
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc).timestamp()
@@ -22,12 +22,12 @@ def sample(asset, venue, mark, notional, bps=1.2):
                        mark, notional / mark, notional, bps / 10000 * interval / 8, interval)
 
 
-def sample_changes(rows, price_pct=1.28, oi_pct=4.6):
+def sample_changes(rows, price_pct=1.28, oi_pct=4.6, now=NOW):
     changes = []
     for row in rows:
         base_price = row.mark_price / (1 + price_pct / 100)
         base_oi = row.oi_base / (1 + oi_pct / 100)
-        base = replace(row, observed_at=NOW - 904, fetched_at=NOW - 902,
+        base = replace(row, observed_at=now - 904, fetched_at=now - 902,
                        mark_price=base_price, oi_base=base_oi, oi_usd=base_price * base_oi)
         changes.append({'venue': row.venue, 'price_pct': price_pct, 'oi_base_pct': oi_pct,
                         'baseline': base.to_dict()})
@@ -49,8 +49,32 @@ def examples():
         if rule in {'positive_funding', 'negative_funding', 'funding_divergence'}:
             rates = (5, 4) if rule == 'positive_funding' else (-5, -4) if rule == 'negative_funding' else (1.2, 4.8)
             rows = [replace(o, funding_rate=bps / 10000 * o.funding_interval_hours / 8) for o, bps in zip(btc, rates)]
-        text, presentation = alert_card(cfg, rule, 'BTC', rows, sample_changes(rows, change), NOW)
+        text, presentation = alert_card(cfg, rule, 'BTC', rows, sample_changes(rows, change), NOW, reference='demo-btc-watch')
         results.append({'kind': rule, 'text': text, 'presentation': presentation})
+    # Independent alternatives, not one chronological lifecycle.
+    for kind, condition, reason, recovered, minute, sequence in [
+        ('followup_holding', 'holding', '', False, 5, 1),
+        ('followup_faded', 'faded', 'condition_faded', False, 10, 2),
+        ('followup_unavailable', 'unavailable', '', False, 10, 2),
+        ('followup_recovered', 'holding', '', True, 15, 3),
+        ('followup_ended', 'holding', 'horizon_elapsed', False, 60, 4),
+    ]:
+        checked = NOW + minute * 60
+        rows = [] if condition == 'unavailable' else [
+            replace(o, observed_at=checked - 4, fetched_at=checked - 2,
+                    mark_price=o.mark_price * 1.01, oi_base=o.oi_base * 1.02, oi_usd=o.oi_usd * 1.01 * 1.02)
+            for o in btc]
+        detail = {'original_id': 'demo-btc-watch', 'original_created_at': NOW, 'asset': 'BTC',
+                  'rule': 'price_oi_up', 'config': asdict(cfg), 'horizon_at': NOW + 3600,
+                  'checked_at': checked, 'condition': condition, 'closed_reason': reason,
+                  'assessment': 'coverage_unavailable' if condition == 'unavailable' else 'fresh_check',
+                  'recovered': recovered, 'sequence': sequence,
+                  'observations': [o.to_dict() for o in rows],
+                  'comparisons': sample_changes(rows, price_pct=0.2 if condition == 'faded' else 1.28, now=checked),
+                  'since_original': [{'venue': o.venue, 'price_pct': 1.0, 'oi_base_pct': 2.0,
+                                      'funding_delta_bps_8h': 0.0} for o in rows]}
+        text, presentation = followup_card(cfg, detail, rows)
+        results.append({'kind': kind, 'text': text, 'presentation': presentation})
     all_rows = btc + eth + sol
     changes = {'BTC': sample_changes(btc), 'ETH': sample_changes(eth, -0.35, 1.2),
                'SOL': sample_changes(sol, 0.63, -1.1)}
@@ -105,7 +129,7 @@ footer{border-top:1px solid #343b45;margin-top:20px;padding-top:12px;color:#909c
 <h1>Read the market. Skip the noise.</h1><p class="intro">What changed. Why it matters. What to check next. Current rule thresholds make each interpretation reviewable. Discord uses native cards; Telegram gets the same information as plain text.</p>
 <div class="notice">DESIGN PREVIEW · ALL MARKET VALUES ARE FICTIONAL</div>
 <div class="toolbar"><label for="kind">Preview a message</label><select id="kind"><option value="all">All formats</option>''' + options + '''</select></div>
-<div class="grid">''' + ''.join(cards) + '''</div><p class="fine">Illustrative layout. Discord fonts, wrapping and timestamp placement vary by device. Colors identify message types, not confidence or expected returns. No network calls, webhooks or tracking are embedded in this preview.</p></main>
+<div class="grid">''' + ''.join(cards) + '''</div><p class="fine">Independent fictional examples, not one chronological watch. Illustrative layout. Discord fonts, wrapping and timestamp placement vary by device. Colors identify message types, not confidence or expected returns. No network calls, webhooks or tracking are embedded in this preview.</p></main>
 <script>document.getElementById('kind').addEventListener('change',function(){document.querySelectorAll('.message').forEach(function(card){card.hidden=this.value!=='all'&&card.dataset.kind!==this.value},this)})</script></body></html>'''
 
 

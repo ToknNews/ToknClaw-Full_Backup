@@ -4,7 +4,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from .models import Event
+from .models import Event, event_id
+from .rules import matching_rules
 from .presentation import alert_card, brief_card, health_card
 
 
@@ -69,23 +70,8 @@ def market_alerts(config, store, observations, now):
         group = sorted((o for o in observations if o.asset == asset), key=lambda o: o.venue)
         if len(group) < config.minimum_venues:
             continue
-        funding = [o.funding_bps_8h for o in group]
-        candidates = []
         comparisons = comparisons_for(config, store, group)
-        if len(comparisons) >= config.minimum_venues:
-            prices = [r['price_pct'] for r in comparisons]
-            oi = [r['oi_base_pct'] for r in comparisons]
-            if all(x >= config.oi_change_pct for x in oi):
-                if all(x >= config.price_change_pct for x in prices):
-                    candidates.append('price_oi_up')
-                elif all(x <= -config.price_change_pct for x in prices):
-                    candidates.append('price_oi_down')
-        if all(x >= config.funding_extreme_bps_8h for x in funding):
-            candidates.append('positive_funding')
-        elif all(x <= -config.funding_extreme_bps_8h for x in funding):
-            candidates.append('negative_funding')
-        if len(group) >= 2 and max(funding) - min(funding) >= config.funding_spread_bps_8h:
-            candidates.append('funding_divergence')
+        candidates = matching_rules(config, group, comparisons)
         for rule in candidates:
             key = config.rule_version + ':' + asset + ':' + rule
             last = store.last_event(key)
@@ -93,8 +79,8 @@ def market_alerts(config, store, observations, now):
                 continue
             if store.alert_count(now - 3600) + len(events) >= config.max_alerts_per_hour:
                 return events
-            text, presentation = alert_card(config, rule, asset, group, comparisons, now)
-            evidence = {'rule': rule, 'config': asdict(config), 'observations': [o.to_dict() for o in group],
+            text, presentation = alert_card(config, rule, asset, group, comparisons, now, reference=event_id(key, now))
+            evidence = {'rule': rule, 'asset': asset, 'config': asdict(config), 'observations': [o.to_dict() for o in group],
                         'comparisons': comparisons, 'presentation': presentation}
             events.append(Event(key, 'alert', 'paid', now, deadline(config, group, now),
                                 text, evidence))

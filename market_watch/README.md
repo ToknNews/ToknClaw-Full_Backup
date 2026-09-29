@@ -1,6 +1,6 @@
 # Tokn Market Watch
 
-An isolated, text-only market-monitoring product for BTC, ETH and SOL. It runs alongside ToknClaw without importing or changing its trading runner, paper positions, strategy configuration, legacy snapshots, or ToknNews Studio.
+An isolated market-monitoring product with native Discord cards and plain-text Telegram messages for BTC, ETH and SOL. It runs alongside ToknClaw without importing or changing its trading runner, paper positions, strategy configuration, legacy snapshots, or ToknNews Studio.
 
 **Pilot implementation, not a claim of trading profitability.** No orders, exchange-account credentials, personalized advice, or LLM-generated measurements. Python 3.10+ standard library only; Ubuntu 22.04 works without pip dependencies.
 
@@ -26,6 +26,7 @@ References checked September 28, 2026:
 | Data health | Missing, nonfinite, stale, future, duplicate and inconsistent measurements fail closed |
 | Event rules | Confirmed price/OI expansion, elevated funding, and cross-venue funding divergence |
 | Noise control | Per-rule one-hour cooldown; six market alerts/hour across the universe by default |
+| Alert follow-through | Five-minute sampled checks for up to 60 minutes, at most four updates per original alert, frozen rules and receipt-bound destinations; see `FOLLOW_THROUGH.md` |
 | Paid summaries | 08:00 and 20:00 America/New_York, within a ten-minute scheduling window |
 | Free sample | One daily BTC summary at 08:00 local time; no paid ETH/SOL measurements |
 | Archive | Transactional SQLite observations, every generated event and its evidence, cycle health and delivery receipts |
@@ -34,6 +35,8 @@ References checked September 28, 2026:
 | Operations | One-shot CLI, non-overlapping process lock, status/health check, backup/export, systemd timer |
 
 The default requires two fresh venues before market comparisons are published. Missing one venue pauses that asset's analysis. Other healthy assets can continue. A degraded/recovered notice is archived and may be delivered to the paid destination. Failed reads never become zero funding, zero OI or invented prices.
+
+Existing installations: use the backup, schema-upgrade and rollout steps in [FOLLOW_THROUGH.md](FOLLOW_THROUGH.md). The update adds tracking tables and starts watches for new alerts only.
 
 ## Run locally without publishing
 
@@ -211,7 +214,7 @@ Use `resolve-delivery --help` for the explicit `sent` or `discarded` resolution.
 
 ## Validation and remaining launch work
 
-The tests cover normalization, partial sources, current-schema input validation, stale/future data, no-lookahead baselines, native-unit OI, restart cooldowns, alert budgets, DST, audience boundaries, transaction rollback, rate limits, uncertain delivery, expiration and opt-in sending.
+The tests cover normalization, partial sources, current-schema input validation, stale/future data, no-lookahead baselines, native-unit OI, restart cooldowns, alert budgets, DST, audience boundaries, transaction rollback, rate limits, uncertain delivery, expiration and opt-in sending. Follow-through tests replay holding/faded/unavailable/recovered/expired states, frozen settings, migration, transaction rollback, restart deduplication, original-receipt gating, destination rotation and queue supersession.
 
 A read-only check in the development environment retrieved the three configured Hyperliquid assets. OKX returned non-JSON content on both the older and officially recommended global endpoint, so the two-venue default correctly suppressed market comparisons. This is an unresolved deployment/source-access check, not grounds to substitute fabricated observations or bypass restrictions. Validate the appropriate regional source on the actual host before launch; a single-venue configuration is an explicit product-scope change and must be described as such to subscribers.
 

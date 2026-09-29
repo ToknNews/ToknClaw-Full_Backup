@@ -5,6 +5,7 @@ import fcntl
 from pathlib import Path
 
 from .engine import assess, health_event, market_alerts, summaries
+from .followups import advance_watches, start_watch
 
 
 @contextmanager
@@ -33,6 +34,8 @@ def run_cycle(config, store, observations, errors, routes, now):
         for event in events:
             target_routes = [r for r in routes if r.audience == event.audience]
             event_id = store.add_event(event, target_routes)
+            start_watch(config, store, event, event_id)
             result.append({'id': event_id, 'kind': event.kind, 'audience': event.audience, 'text': event.text})
+        result += advance_watches(config, store, observations, errors, routes, now)
         store.record_cycle(now, issues, len(accepted))
     return {'observations': len(accepted), 'issues': issues, 'events': result}

@@ -1,12 +1,12 @@
 # Tokn Market Watch: subscriber value and next product work
 
-Status: September 29, 2026. Product hypotheses below are not validated demand or performance claims. This document distinguishes delivered presentation improvements from proposed analytical modules.
+Status: September 29, 2026. Product hypotheses below are not validated demand or performance claims. This document distinguishes implemented presentation and follow-through from proposed analytical modules. Live rollout and demand remain unverified.
 
 ## Key facts
 
 - Current inputs: BTC, ETH and SOL mark prices, open interest and funding from Hyperliquid and OKX. The default requires fresh coverage from both venues.
 - Current product: reproducible condition alerts, morning/evening briefs, a daily BTC sample, archive and delivery receipts. The updated cards explain the observation, suggest the next research check, and display the configured condition thresholds. Briefs open with asset-by-asset context.
-- Not yet implemented: automated alert lifecycle updates, support/resistance or candle-based entry triggers, historical outcome reports, subscriber-level preferences, checkout/access management, or a demonstrated trading edge.
+- Not yet implemented: support/resistance or candle-based entry triggers, historical outcome reports, subscriber-level preferences, checkout/access management, or a demonstrated trading edge.
 - The operator has verified a Discord connection test and a healthy collection cycle. Sustained production operation, actual market cards and paid demand still need verification.
 - CoinGlass already publishes funding comparisons and offers price/open-interest alerts. That makes another feed of those measurements a weak basis for differentiation. This is a product judgment, not evidence that nobody would buy it.
 
@@ -32,20 +32,20 @@ Paid derivatives guidance needs a focused legal review for the intended product 
 
 ## Recommendations
 
-### 1. Alert follow-through: the next customer-facing module
+### 1. Alert follow-through: implemented, awaiting live pilot verification
 
 Subscriber benefit: learn whether the condition behind an alert persisted, faded, expired, or became unobservable.
 
-Proposed implementation:
+Implemented behavior (see `FOLLOW_THROUGH.md` for exact limits and rollout):
 
 - Store a scenario record linked to the original archived event, rule version, configuration, venue cohort and source observations.
-- Re-evaluate with fresh data at defined intervals. Proposed initial observation horizon: 60 minutes; validate it in the pilot rather than presenting it as optimal.
+- Re-evaluate with fresh data at defined intervals. Default interval: five minutes; observation horizon: 60 minutes; at most four updates including closure; validate it in the pilot rather than presenting it as optimal.
 - Separate the current rolling-window condition from changes since the original alert. For example, a rolling price/OI threshold can stop qualifying even while price remains above its alert-time mark.
 - Keep `unavailable` separate from `condition faded`. Missing data must not invent a market outcome.
 - Publish only meaningful state changes, with a per-scenario cap and expiry. Route updates through the existing audience-bound outbox and persist deduplication across restarts.
 - Keep a state meaning the pattern persisted separate from any claim that a trade was confirmed. No win/loss label without a predefined trade model.
 
-Acceptance: replay rising, fading, mixed-venue and missing-data sequences; demonstrate restart-safe updates; inspect the full original-alert-to-follow-up experience in the private Discord pilot.
+Offline replay and restart tests are implemented and pass. Remaining acceptance: deploy the update and inspect the full original-alert-to-follow-up experience and original-message receipts in the private Discord pilot.
 
 ### 2. Honest outcome reports
 
@@ -79,13 +79,13 @@ Later, reuse ToknNews ingestion for sourced, time-stamped context or upcoming sc
 
 ## Packaging and validation
 
-- Keep one paid pilot tier initially. The existing free BTC morning sample can demonstrate writing quality. Paid coverage currently adds ETH/SOL and condition alerts; promise lifecycle updates or performance reports only once built and verified.
+- Keep one paid pilot tier initially. The existing free BTC morning sample can demonstrate writing quality. Paid coverage currently adds ETH/SOL and condition alerts; include lifecycle updates only after live verification; performance reports remain planned.
 - Test the existing price hypothesis ($29 introductory month with clearly disclosed $49 renewal) with 5–10 paying pilot customers. This is an experiment, not a price validated by the research above.
 - Ask which specific message changed a research decision, what was unclear, what felt repetitive and why they would renew. Measure paid conversion, refunds, cancellations, renewal and support time; free signups do not establish willingness to pay.
 - Judge contribution after hosting, membership/payment fees, licensed data, refunds and support. Low server cost alone does not establish a profitable business. Do not add premium data subscriptions until a feature's benefit justifies them.
 - Continue operations hardening and a private reliability pilot alongside product work. Delivery reliability and understandable content are both necessary.
 
-The copy revision uses deterministic templates and the existing data. It adds no paid model calls or data vendor subscription. Proposed lifecycle tracking and outcome evaluation can reuse the current Python/SQLite stack; their development and operational costs still need to be measured.
+The copy revision uses deterministic templates and the existing data. It adds no paid model calls or data vendor subscription. Lifecycle tracking uses the current Python/SQLite stack. Outcome evaluation remains planned; ongoing operational cost and subscriber value still need to be measured.
 
 ## Sources checked September 29, 2026
 

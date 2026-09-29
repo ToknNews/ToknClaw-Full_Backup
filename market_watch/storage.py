@@ -1,11 +1,10 @@
 """Transactional observations, immutable event evidence, and delivery outbox."""
 
-import hashlib
 import json
 from pathlib import Path
 import sqlite3
 
-from .models import Observation
+from .models import Observation, event_id as make_event_id
 
 
 class Store:
@@ -13,7 +12,7 @@ class Store:
         if readonly:
             self.db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=20)
             self.db.row_factory = sqlite3.Row
-            if self.db.execute("PRAGMA user_version").fetchone()[0] != 1:
+            if self.db.execute("PRAGMA user_version").fetchone()[0] not in (1, 2):
                 self.db.close()
                 raise ValueError("unsupported or uninitialized archive schema")
             return
@@ -22,36 +21,61 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
-        if self.db.execute("PRAGMA user_version").fetchone()[0] not in (0, 1):
+        if self.db.execute("PRAGMA user_version").fetchone()[0] not in (0, 1, 2):
+            self.db.close()
             raise ValueError("unsupported archive schema version")
-        self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS observations (
-                venue TEXT NOT NULL, asset TEXT NOT NULL, instrument TEXT NOT NULL,
-                observed_at REAL NOT NULL, payload TEXT NOT NULL,
-                PRIMARY KEY (venue, asset, observed_at)
-            );
-            CREATE INDEX IF NOT EXISTS observation_lookup
-                ON observations(venue, asset, instrument, observed_at);
-            CREATE TABLE IF NOT EXISTS events (
-                id TEXT PRIMARY KEY, event_key TEXT NOT NULL, kind TEXT NOT NULL,
-                audience TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL,
-                text TEXT NOT NULL, evidence TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS event_lookup ON events(event_key, created_at);
-            CREATE TABLE IF NOT EXISTS deliveries (
-                id INTEGER PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id),
-                route TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
-                attempts INTEGER NOT NULL DEFAULT 0, next_attempt REAL NOT NULL DEFAULT 0,
-                remote_id TEXT, error TEXT, updated_at REAL NOT NULL,
-                UNIQUE(event_id, route)
-            );
-            CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS cycles (
-                id INTEGER PRIMARY KEY, completed_at REAL NOT NULL, issues TEXT NOT NULL,
-                observation_count INTEGER NOT NULL
-            );
-            PRAGMA user_version=1;
-        """)
+        try:
+            self.db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS observations (
+                    venue TEXT NOT NULL, asset TEXT NOT NULL, instrument TEXT NOT NULL,
+                    observed_at REAL NOT NULL, payload TEXT NOT NULL,
+                    PRIMARY KEY (venue, asset, observed_at)
+                );
+                CREATE INDEX IF NOT EXISTS observation_lookup
+                    ON observations(venue, asset, instrument, observed_at);
+                CREATE TABLE IF NOT EXISTS events (
+                    id TEXT PRIMARY KEY, event_key TEXT NOT NULL, kind TEXT NOT NULL,
+                    audience TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL,
+                    text TEXT NOT NULL, evidence TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS event_lookup ON events(event_key, created_at);
+                CREATE TABLE IF NOT EXISTS deliveries (
+                    id INTEGER PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id),
+                    route TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0, next_attempt REAL NOT NULL DEFAULT 0,
+                    remote_id TEXT, error TEXT, updated_at REAL NOT NULL,
+                    UNIQUE(event_id, route)
+                );
+                CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS cycles (
+                    id INTEGER PRIMARY KEY, completed_at REAL NOT NULL, issues TEXT NOT NULL,
+                    observation_count INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS alert_watches (
+                    original_id TEXT PRIMARY KEY REFERENCES events(id),
+                    asset TEXT NOT NULL, rule TEXT NOT NULL,
+                    horizon_at REAL NOT NULL, next_check_at REAL NOT NULL,
+                    last_checked_at REAL NOT NULL, state TEXT NOT NULL,
+                    update_count INTEGER NOT NULL DEFAULT 0,
+                    closed_at REAL, spec TEXT NOT NULL,
+                    watermarks TEXT NOT NULL, last_check TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS watch_due ON alert_watches(closed_at, next_check_at);
+                CREATE TABLE IF NOT EXISTS alert_followups (
+                    event_id TEXT PRIMARY KEY REFERENCES events(id),
+                    original_id TEXT NOT NULL REFERENCES alert_watches(original_id),
+                    sequence INTEGER NOT NULL,
+                    UNIQUE(original_id, sequence)
+                );
+                PRAGMA user_version=2;
+                COMMIT;
+            """)
+        except sqlite3.Error:
+            self.db.rollback()
+            self.db.close()
+            raise
+
 
     def close(self):
         self.db.close()
@@ -87,7 +111,7 @@ class Store:
                         (key, json.dumps(value, allow_nan=False)))
 
     def add_event(self, event, routes):
-        event_id = hashlib.sha256((event.key + ':' + str(event.created_at)).encode()).hexdigest()[:24]
+        event_id = make_event_id(event.key, event.created_at)
         self.db.execute("INSERT INTO events VALUES (?,?,?,?,?,?,?,?)", (
             event_id, event.key, event.kind, event.audience, event.created_at, event.expires_at,
             event.text, json.dumps(event.evidence, allow_nan=False, sort_keys=True)
@@ -96,6 +120,49 @@ class Store:
             self.db.execute("INSERT INTO deliveries(event_id,route,updated_at) VALUES (?,?,?)",
                             (event_id, route.name, event.created_at))
         return event_id
+
+    def start_watch(self, original_id, asset, rule, now, spec, watermarks):
+        cfg = spec['config']
+        self.db.execute("""INSERT INTO alert_watches
+            (original_id,asset,rule,horizon_at,next_check_at,last_checked_at,state,spec,watermarks,last_check)
+            VALUES (?,?,?,?,?,?,?,?,?,?)""", (
+                original_id, asset, rule, now + cfg['followup_horizon_minutes'] * 60,
+                now + cfg['followup_check_minutes'] * 60, now, 'watching',
+                json.dumps(spec, allow_nan=False), json.dumps(watermarks, allow_nan=False), '{}'))
+
+    def due_watches(self, now, include_all=False):
+        return self.db.execute("""SELECT w.*, e.created_at AS original_at FROM alert_watches w
+            JOIN events e ON e.id=w.original_id WHERE w.closed_at IS NULL
+            AND (? OR w.next_check_at<=?) ORDER BY w.next_check_at,w.original_id""", (include_all, now)).fetchall()
+
+    def update_watch(self, original_id, state, count, now, next_check, closed, watermarks, evidence):
+        self.db.execute("""UPDATE alert_watches SET state=?,update_count=?,last_checked_at=?,
+            next_check_at=?,closed_at=?,watermarks=?,last_check=? WHERE original_id=?""", (
+                state, count, now, next_check, now if closed else None,
+                json.dumps(watermarks, allow_nan=False), json.dumps(evidence, allow_nan=False), original_id))
+
+    def add_followup(self, event, original_id, sequence, routes):
+        if event.kind != 'followup' or event.audience != 'paid':
+            raise ValueError('follow-ups require the paid audience')
+        # A new state supersedes queued old states, including explicitly retryable 429s.
+        # Unknown sends remain quarantined; they must never be blindly repeated.
+        self.db.execute("""UPDATE deliveries SET status='expired',error='superseded_followup',updated_at=?
+            WHERE status='pending' AND event_id IN
+            (SELECT event_id FROM alert_followups WHERE original_id=?)""", (event.created_at, original_id))
+        receipts = {r[0] for r in self.db.execute("""SELECT route FROM deliveries
+            WHERE event_id=? AND status='sent' AND remote_id IS NOT NULL AND remote_id!=''""", (original_id,))}
+        target = [r for r in routes if r.audience == 'paid' and r.name in receipts]
+        child_id = self.add_event(event, target)
+        self.db.execute('INSERT INTO alert_followups VALUES (?,?,?)', (child_id, original_id, sequence))
+        return child_id
+
+    def watch_status(self):
+        # Read-only checks/backups remain available before the first v2 write.
+        if self.db.execute('PRAGMA user_version').fetchone()[0] < 2:
+            return {'active': 0, 'closed': 0, 'states': {}}
+        counts = dict(self.db.execute('SELECT state,COUNT(*) FROM alert_watches GROUP BY state'))
+        active = self.db.execute('SELECT COUNT(*) FROM alert_watches WHERE closed_at IS NULL').fetchone()[0]
+        return {'active': active, 'closed': sum(counts.values()) - active, 'states': counts}
 
     def record_cycle(self, now, issues, count):
         self.db.execute("INSERT INTO cycles(completed_at,issues,observation_count) VALUES (?,?,?)",
@@ -132,6 +199,7 @@ class Store:
     def status(self, now):
         cycle = self.db.execute("SELECT * FROM cycles ORDER BY id DESC LIMIT 1").fetchone()
         return {
+            "watches": self.watch_status(),
             "last_cycle_at": cycle['completed_at'] if cycle else None,
             "cycle_age_seconds": round(now - cycle['completed_at'], 1) if cycle else None,
             "source_issues": json.loads(cycle['issues']) if cycle else {"system": "not_started"},

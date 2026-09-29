@@ -30,6 +30,10 @@ class Config:
     max_price_disagreement_pct: float = 2.0
     delivery_ttl_seconds: int = 600
     request_timeout_seconds: int = 10
+    followup_enabled: bool = True
+    followup_check_minutes: int = 5
+    followup_horizon_minutes: int = 60
+    followup_max_updates: int = 4
     rule_version: str = "market-watch-v1"
 
     def __post_init__(self):
@@ -56,6 +60,15 @@ class Config:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(name + " must be finite and positive")
+        if type(self.followup_enabled) is not bool:
+            raise ValueError('followup_enabled must be a boolean')
+        for name in ('followup_check_minutes', 'followup_horizon_minutes', 'followup_max_updates'):
+            if type(getattr(self, name)) is not int:
+                raise ValueError(name + ' must be an integer')
+        if not 1 <= self.followup_check_minutes < self.followup_horizon_minutes <= 240:
+            raise ValueError('follow-up interval must be positive and shorter than a horizon of at most 240 minutes')
+        if not 2 <= self.followup_max_updates <= 10:
+            raise ValueError('followup_max_updates must be between 2 and 10')
         hours = (*self.summary_hours, self.free_summary_hour)
         if any(type(h) is not int or not 0 <= h <= 23 for h in hours):
             raise ValueError("summary hours must be integers from 0 to 23")

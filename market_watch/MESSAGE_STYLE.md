@@ -16,7 +16,7 @@ Every market alert uses this order:
 
 Briefs start with **At a glance**: an asset-by-asset description of the current price/OI rule context and any funding conditions, before the detailed readings. Missing coverage pauses analysis; missing price/OI baselines are distinguished from a valid comparison with no qualifying pattern. Funding can still be described when its current measurements are valid.
 
-Do not invent confidence scores, win rates, liquidations, whale activity, support/resistance, net new longs/shorts or a causal explanation. A price/OI pattern can justify closer attention; it does not establish future returns. Funding comparisons describe estimated carry, not executable arbitrage. Recheck copy never promises that a follow-up notification exists: automatic condition tracking is a proposed next module, not implemented in this formatter.
+Do not invent confidence scores, win rates, liquidations, whale activity, support/resistance, net new longs/shorts or a causal explanation. A price/OI pattern can justify closer attention; it does not establish future returns. Funding comparisons describe estimated carry, not executable arbitrage. Automatic follow-through is implemented separately in `followups.py`; its timing, state meanings, delivery limits and upgrade steps are documented in `FOLLOW_THROUGH.md`.
 
 Discord uses one native embed with vertically stacked fields. Telegram and the event archive retain readable plain text with the same measurements and interpretations. No generated artwork or paid model calls are needed.
 
@@ -29,6 +29,7 @@ Discord uses one native embed with vertically stacked fields. Telegram and the e
 | Elevated positive funding | BTC · LONGS PAYING UP | Amber | Positive funding estimates, price/OI context where available |
 | Elevated negative funding | BTC · SHORTS PAYING UP | Amber | Negative funding estimates, without asserting a rebound |
 | Funding divergence | BTC · FUNDING SPLIT | Violet | Venue rates plus their difference in basis points |
+| Follow-up | BTC · CONDITION HOLDS / CONDITION FADED / CHECK PAUSED / WATCH ENDED | Cyan / Slate / Amber | Original reference, actual check time, rolling rule status and separate changes since the original alert |
 | Paid brief | AM BRIEF / PM BRIEF | Cyan | BTC, ETH and SOL sections, an opening interpretation, source coverage, available price/OI changes |
 | Public sample | FREE LOOK · BTC | Slate | BTC measurements only, plus a short description of full-feed coverage |
 | Data health | DATA CHECK · COVERAGE LIMITED / RESTORED | Amber / Mint | Affected coverage and whether measurements can be used |
@@ -49,7 +50,7 @@ The subscriber-value roadmap and validation experiment are in `SUBSCRIBER_VALUE.
 
 ## Preview
 
-`MESSAGE_PREVIEW.html` is a self-contained, responsive design preview with a selector for nine message types. All example values and timestamps are fictional and each card is labeled DEMO. It has no credentials, network requests, trackers or posting controls. Its layout is illustrative; Discord's exact typography and wrapping vary by device.
+`MESSAGE_PREVIEW.html` is a self-contained, responsive design preview with a selector for fourteen examples, including five follow-up alternatives. All example values and timestamps are fictional and each card is labeled DEMO. It has no credentials, network requests, trackers or posting controls. Its layout is illustrative; Discord's exact typography and wrapping vary by device.
 
 ```bash
 # Enter the installed project.
@@ -72,6 +73,8 @@ python3 -m market_watch.message_preview --format json
 ```
 
 ## Rollout to the private feed
+
+For the current follow-through release, follow `FOLLOW_THROUGH.md`, which includes a pre-migration backup. The older formatting-only commands below are insufficient for that first schema upgrade.
 
 These steps pause collection briefly so a running process cannot import a mixture of old and new files. They preserve the runtime configuration, webhook, database and delivery switches. Stop if any command fails; do not resume with failing tests.
 
@@ -110,7 +113,7 @@ sudo systemctl start tokn-market-watch.service
 sudo python3 -m market_watch --config config/market_watch.json --database /var/lib/tokn-market-watch/state.sqlite3 check
 ```
 
-New events carry the new presentation in their existing evidence record; no database migration is required. Existing archived/pending events keep their original text. A message appears only when a real alert or brief is due. Verify the first new Discord card and its receipt in the private channel before expanding access.
+Presentation is stored in event evidence. The original formatting-only release needed no migration; the current follow-through release migrates to schema 2 as documented in `FOLLOW_THROUGH.md`. Existing archived/pending events keep their original text. A message appears only when a real alert or brief is due. Verify the first new Discord card and its receipt in the private channel before expanding access.
 
 ## Payload checks
 

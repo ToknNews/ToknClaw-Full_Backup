@@ -2,6 +2,7 @@
 
 from dataclasses import asdict, dataclass
 import math
+import hashlib
 
 
 def number(value, *, positive=False):
@@ -63,3 +64,7 @@ class Event:
     expires_at: float
     text: str
     evidence: dict
+
+
+def event_id(key, created_at):
+    return hashlib.sha256((key + ':' + str(created_at)).encode()).hexdigest()[:24]
