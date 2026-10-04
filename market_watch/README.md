@@ -224,3 +224,12 @@ No real Discord/Telegram messages were sent, no memberships were sold, and no se
 ## Position playbooks and historical outcomes
 
 See [POSITION_PLAYBOOKS.md](POSITION_PLAYBOOKS.md) for conditional long/short/new-entry guidance, quantified funding budgets, directional changes during funding watches and the read-only `outcomes --days 30` report. These provide positioning context and descriptive mark outcomes; tested entry/stop/target scenarios and trading-return statistics are not implemented.
+
+## Operator shadow scorecard
+
+`scorecard` reports existing Setup Engine shadow evidence over an explicit time
+window, with separate carry-in watches, frozen policy cohorts, screening retry
+deduplication and coverage gaps. It reads one SQLite snapshot without collection,
+configuration changes, migration or delivery. It does not calculate fills, P&L or
+win rates. See [SCORECARD.md](SCORECARD.md) for invocation, denominators, a fictional
+output excerpt and limitations. The original `outcomes` command is unchanged.

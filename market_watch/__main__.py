@@ -14,6 +14,7 @@ from .config import load_config
 from .delivery import dispatch, routes_from_env
 from .http import JsonClient
 from .outcomes import report as outcome_report
+from .scorecard import instant, report as scorecard_report
 from .service import process_lock, run_cycle
 from .sources import collect
 from .setup_data import collect_setup_data
@@ -36,6 +37,11 @@ def main(argv=None):
     outcomes.add_argument('--details', action='store_true', help='include every included alert and its horizon samples')
     setups = sub.add_parser('setups', help='read-only setup history and source coverage; not trading performance')
     setups.add_argument('--limit', type=int, default=20)
+    scorecard = sub.add_parser('scorecard', help='operator-only read-only shadow evidence; not trading returns')
+    scorecard.add_argument('--start', required=True, help='inclusive ISO 8601 instant with UTC offset')
+    scorecard.add_argument('--end', required=True, help='exclusive cutoff, ISO 8601 instant with UTC offset')
+    scorecard.add_argument('--timezone', required=True, help='IANA timezone for displayed window')
+    scorecard.add_argument('--details', action='store_true', help='include setup IDs, frozen levels and estimates')
     backup = sub.add_parser('backup', help='consistent SQLite backup; destination must not exist')
     backup.add_argument('destination')
     resolve = sub.add_parser('resolve-delivery', help='resolve an uncertain send after checking the channel')
@@ -45,6 +51,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
     os.umask(0o077)
     try:
+        if args.command == 'scorecard':
+            if not args.database or args.config:
+                raise ValueError('scorecard requires explicit --database and does not read --config')
+            output = scorecard_report(args.database, instant(args.start), instant(args.end),
+                                      args.timezone, args.details)
+            print(json.dumps(output, indent=2, allow_nan=False))
+            return 0
         config = load_config(args.config)
         db = args.database or os.environ.get('MARKET_WATCH_DATABASE') or config.database
         config = replace(config, database=db)
