@@ -234,3 +234,101 @@ References checked October 4, 2026:
 - https://docs.github.com/en/actions/concepts/security/secrets
 - https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
 - https://man.openbsd.org/sshd.8
+
+## Offline CI routing and development preflight
+
+Bounded efficiency pass, October 4, 2026; local review only. Owner approval covers
+CI/preflight efficiency, not publication or deployment. The delegated writer is
+the sole Tokn implementation worker; Social OS remains the other substantive task.
+No additional worker was started. `ToknNews-Full_Backup` was read as reference only.
+No `AGENTS.md` or `.agents/skills` files were present in these checkouts; the
+workspace `.agents` directory was empty. Existing research milestone boundaries
+remain in force.
+
+For changes matching the existing path filters, the offline workflow now routes:
+
+| Event | Offline matrix |
+| --- | --- |
+| PR opened, synchronized or reopened, any target (including stacked/draft PRs) | Python 3.10, 3.12 and 3.14 |
+| Push to `main`, `release/market-watch` or `ops/market-watch-connect` | Same full matrix on the pushed revision |
+| Feature branch push, before or after opening a PR | None; run local suites before review and open a draft PR when publication is authorized |
+| Tag push or unrelated paths | None |
+
+PR checks test GitHub's merge ref; integration pushes retain exact-ref checks.
+Concurrency groups include workflow, event and PR number (or full push ref), so
+only superseded offline runs in the same lane cancel. Separate PRs, refs and the
+production group do not cancel each other. The deploy workflow is unchanged:
+its exact-release test, dependency gate, permissions and non-cancelling
+`market-watch-production` serialization remain independent. No API lookup,
+additional credential or dependency is needed for routing. Existing path-filter
+limitations still apply; this does not introduce a required-check/settings change.
+
+Before editing, use read-only checks from the implementation checkout:
+
+```bash
+pwd
+git remote get-url origin
+git status --short --branch
+git worktree list
+git log -1 --format='%H %s'
+command -v git python3 gh
+python3 --version
+# Network/auth readiness and current release evidence; no fetch, push or settings write.
+git ls-remote origin refs/heads/release/market-watch
+gh repo view ToknNews/ToknClaw-Full_Backup --json visibility,defaultBranchRef
+gh pr list --repo ToknNews/ToknClaw-Full_Backup --state open
+gh run list --repo ToknNews/ToknClaw-Full_Backup --branch release/market-watch --limit 5
+```
+
+Check current task ownership with the coordinator as well; Git does not prove
+another worker is idle. Stop on access denial, unexpected repository, newer remote
+work, or conflicting edits and reconcile before writing. Missing network access
+does not establish a current release SHA. Do not print environment files or token
+values. Do not push to `release/market-watch`: a push deploys live code. These
+commands are developer preflight only, not added runtime or deployment steps.
+
+Validation commands (offline, standard library only):
+
+```bash
+python3 -B -m unittest discover -s market_watch/tests -p test_ci_routing.py -v
+python3 -B -m unittest discover -s market_watch/tests -v
+python3 -B -m unittest discover -s tokn_research/tests -v
+git diff --check
+```
+
+### Evidence and measured limits
+
+Live read-only verification found release head
+`f60f941faefc9abac9875489125398dc96ce83d2`, merged PRs
+[#4](https://github.com/ToknNews/ToknClaw-Full_Backup/pull/4) and
+[#5](https://github.com/ToknNews/ToknClaw-Full_Backup/pull/5), and successful
+[deployment](https://github.com/ToknNews/ToknClaw-Full_Backup/actions/runs/37217207992)
+and [offline matrix](https://github.com/ToknNews/ToknClaw-Full_Backup/actions/runs/37217207972).
+The clean local feature branch was created from that freshly fetched release head.
+Older PRs #1–3 remain open; none was modified.
+
+For PR #5 head `3a00b80ba799639a64b3824da4bde880a29afd1c`, the historical
+[push run](https://github.com/ToknNews/ToknClaw-Full_Backup/actions/runs/37217123648)
+and [PR run](https://github.com/ToknNews/ToknClaw-Full_Backup/actions/runs/37217126785)
+each completed all three jobs. GitHub job start/completion timestamps give push
+job durations of 9, 8 and 12 seconds (29 aggregate job-seconds), and PR durations
+of 8, 8 and 10 seconds (26 aggregate job-seconds). These exclude queue time and
+are not billing measurements. The routing contract reduces a comparable feature
+update from two workflow runs/six matrix jobs to one/three. That is a modeled
+count change, not an observed post-publication saving. No cancellation-time or
+future wall-clock saving has been measured. The repository is PUBLIC and uses
+standard hosted runners; these tests do not consume a private-repository allowance.
+
+Local Python 3.12.14 baseline: 229 Market Watch tests in 0.635s and 56 research
+tests in 0.023s. After the change: 235 Market Watch tests in 0.588s and 56 research
+tests in 0.024s, all passing; six focused routing tests passed in 0.002s. Single
+runs are not evidence of a speedup. In-memory negative controls detected the old
+duplicate routing, removal of the release push, a global production concurrency
+group, disabled cancellation, and removal of Python 3.14. These tests use narrow
+text/section contracts and a routing model, not a complete Actions/YAML engine.
+Python 3.10/3.14 and actionlint were unavailable locally; the hosted matrix has
+not run this unpublished change. The deploy workflow has zero diff from the base.
+
+Routing follows GitHub's [workflow filter syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
+and [concurrency semantics](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+No deployment, publication, strategy behavior or access/settings change is included.

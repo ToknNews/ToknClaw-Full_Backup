@@ -8,7 +8,13 @@ on:
       - "research_specs/**"
       - "config/market_watch.json"
       - ".github/workflows/market-watch-tests.yml"
+  # Feature branches are tested through PRs (including draft and stacked PRs).
+  # Keep exact integration/ref testing independently of PR merge-ref tests.
   push:
+    branches:
+      - main
+      - release/market-watch
+      - ops/market-watch-connect
     paths:
       - "market_watch/**"
       - "tokn_research/**"
@@ -18,6 +24,11 @@ on:
 
 permissions:
   contents: read
+
+# Only superseded offline checks are disposable. Never share the production group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   offline-tests:
