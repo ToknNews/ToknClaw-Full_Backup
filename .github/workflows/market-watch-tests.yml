@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - "market_watch/**"
+      - "tokn_research/**"
+      - "research_specs/**"
       - "config/market_watch.json"
       - ".github/workflows/market-watch-tests.yml"
   push:
     paths:
       - "market_watch/**"
+      - "tokn_research/**"
+      - "research_specs/**"
       - "config/market_watch.json"
       - ".github/workflows/market-watch-tests.yml"
 
@@ -31,3 +35,5 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Run isolated offline tests
         run: python -m unittest discover -s market_watch/tests -v
+      - name: Run synthetic research foundation tests
+        run: python -m unittest discover -s tokn_research/tests -v
