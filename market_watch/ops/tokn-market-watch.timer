@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect Tokn Market Watch approximately once per minute
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+AccuracySec=1s
+Unit=tokn-market-watch.service
+
+[Install]
+WantedBy=timers.target
