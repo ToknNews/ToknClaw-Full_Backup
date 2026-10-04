@@ -81,7 +81,7 @@ class SetupTests(unittest.TestCase):
         if kind == 'break':
             o, h, l, c, v = level - .1*a, t + .2*a, level - .3*a, t + .1*a, 160
         elif kind == 'retest':
-            o, h, l, c, v = level + .05*a, t + .3*a, level - .1*a, t + .2*a, 90
+            o, h, l, c, v = level + .05*a, t + .3*a, level - .1*a, (t+s['entry_limit'])/2, 90
         elif kind == 'hold':
             o, h, l, c, v = t+.1*a, t+.3*a, t, t+.2*a, 100
         elif kind == 'target1':
@@ -146,7 +146,7 @@ class SetupTests(unittest.TestCase):
         self.cycle(NOW+300,batch(self.rows,NOW+300))
         self.assertEqual(self.store.active_setups()[0]['stage'],'armed')
         self.rows.append(Candle('hyperliquid','BTC',END+300,s['level']-.05*a,s['level']+.1*a,
-                                s['trigger']-.3*a,s['trigger']-.2*a,90,NOW+600))
+                                s['trigger']-.3*a,(s['trigger']+s['entry_limit'])/2,90,NOW+600))
         self.cycle(NOW+600,batch(self.rows,NOW+600))
         self.assertEqual(self.store.active_setups()[0]['stage'],'triggered')
 

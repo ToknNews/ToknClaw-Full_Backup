@@ -52,12 +52,34 @@ Rules are deliberately narrow and unvalidated as a trading edge. Changing the fi
 2. Build the range from the preceding 12 candles, excluding the formation candle. ATR is the arithmetic mean of 14 true ranges from preceding candles; volume baseline is the mean of 20 preceding base-volume candles. These are not Wilder ATR or an EMA.
 3. Range width must be between 2 and 6 ATR. The formation close is inside the range, within 20% of its chosen edge, above the previous 20-close mean for a long or below it for a short. The current book midpoint must still be near that edge, inside the range and on the valid side of invalidation.
 4. Let direction `d` be +1 for long or -1 for short; let `L` be the selected range edge. Trigger = `L + d*0.10*ATR`; invalidation = `L - d*0.75*ATR`; retest zone = `L ± 0.20*ATR`. Planned risk `R` is the distance from trigger to invalidation. Reference targets = trigger + `d*1.5R` and trigger + `d*2.5R`. None move after issuance.
-5. A subsequent candle must close through the trigger with at least 1.20 times the frozen volume baseline to arm the setup. At least one later candle must overlap the retest zone, close through the trigger in the intended candle direction, and remain inside the entry band. The entry band extends from trigger to trigger + `d*0.60*ATR`.
-6. Both arming and triggering require a book no more than 60 seconds old, spread at most 8 bps and at least $10,000 of visible depth on each side within 10 bps. At a trigger, the current ask for a long or bid for a short must also be inside the entry band. A quote is not a fill; remaining target-2 reward/risk is shown before costs.
+5. A subsequent candle must close through the trigger with at least 1.20 times the frozen volume baseline to arm the setup. At least one later candle must overlap the retest zone, close through the trigger in the intended candle direction, and remain inside the entry band. The structural band extends from trigger to trigger + `d*0.60*ATR`; the execution-cost policy below narrows it for new watches.
+6. Both arming and triggering require a book no more than 60 seconds old, spread at most 8 bps and at least $10,000 of visible depth on each side within 10 bps. At a trigger, the current ask for a long or bid for a short must also be inside the entry band. A quote is not a fill. New watches recheck target-2 reward/risk after estimated execution costs at that quote.
 7. Touching invalidation ends the setup. Reaching the first target before a valid trigger ends it as an extended move; do not chase. After triggering, later closed candles evaluate target/invalidation touches. A candle crossing both the invalidation and next target is ambiguous, never a favorable ordering assumption. A boundary touch in the first candle overlapping card issuance also has unknown timing relative to that notification and is marked ambiguous. Target one remains active; target two completes tracking.
-8. Untriggered setups expire after 60 minutes. Triggered setups have a 24-hour monitoring horizon; this is not a max-hold exit instruction. Gaps of more than one decision candle close tracking as incomplete. Intrabar paths, execution latency, fees, slippage and realized funding are not modeled.
+8. Untriggered setups expire after 60 minutes. Triggered setups have a 24-hour monitoring horizon; this is not a max-hold exit instruction. Gaps of more than one decision candle close tracking as incomplete. Intrabar paths, execution latency, actual fills and realized funding are not modeled. Execution-cost allowances are hypothetical screening inputs, not a backtest or realized returns.
 
 One active setup per asset, at most three new setups per hour across the universe, a 60-minute cooldown after closure and a maximum of 12 ordinary updates bound noise. A final closing update may follow the update cap. These limits are independent of existing market-alert limits.
+
+## Execution-cost policy v1
+
+New watches apply `execution-costs-v1` after the structural and current-price checks, before creating a setup or delivery. The first shadow BTC candidate had only about 1.31 bps to target two; the default estimated roundtrip execution budget is about 13 bps. Such a candidate now produces a recorded screen rejection instead of an alert.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `setup_fee_bps_per_side` | 4.5 | 0.045% fee per entry/exit notional |
+| `setup_slippage_bps_per_side` | 2 | Additional execution allowance per side, not a measured or guaranteed fill |
+| `setup_min_atr_bps` | 10 | Minimum frozen ATR / trigger × 10,000 |
+| `setup_min_risk_bps` | 10 | Minimum trigger-to-invalidation distance / trigger × 10,000 |
+| `setup_min_net_rr` | 1.5 | Minimum target-two reward/risk after estimated execution costs |
+
+The fee default uses the Hyperliquid base perpetual taker rate, verified October 4, 2026: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees . Account tiers and discounts differ. The execution allowance and thresholds are explicit product assumptions, not empirically calibrated estimates or evidence of profitability. Fees are not refreshed automatically. Funding is excluded because the holding period and future funding path are unknown; current funding remains separate context. Each target is a separate full-exit scenario, not an assumed partial-exit allocation. Leverage, liquidation, market impact, latency and actual order sizes are not modeled.
+
+For entry price `E`, hypothetical exit price `X`, and per-side combined rate `c`, estimated execution cost per base unit is `(E + X) * c`. Net target reward is directional price movement minus that cost. Net stop risk is the price distance to invalidation plus entry/stop costs. The ratio divides net reward by net stop risk, rather than subtracting fees only from the numerator. Both targets must retain positive net reward at the trigger, and target two must meet the minimum ratio.
+
+The new entry cap is the intersection of the structural band and the prices that retain the minimum ratio. For direction `d` (+1 long, -1 short), target two `T`, stop `S`, and minimum ratio `m`, the limiting entry is `(d-c)*(T+m*S)/((d+c)*(1+m))`. Neither the targets nor invalidation are widened to manufacture a passing setup. The current indicative quote is checked again at confirmation using the frozen policy.
+
+Cards show **Room after costs**, including both target ratios, the minimum and per-side assumptions. Archived `cost_screen` evidence contains the policy version, assumptions and calculations at the trigger and entry cap. A confirmation adds its own quote-based calculation. Old watches retain their original levels, band, config and lifecycle; they are explicitly labeled as legacy, without cost screening. No old record is rewritten or assigned a new cost-based performance result. New event identities include the cost-policy version. No database schema migration is needed.
+
+`setups` exposes the current `health.cost_policy`, `screen`, and `screen_details`. Rejections include `targets_do_not_cover_costs`, `volatility_too_small`, `invalidation_too_close`, and `net_reward_risk_too_low`; details retain all applicable reasons and calculations in the sampled archive. These are normal screens, not degraded source health. Existing valid config files receive the new defaults in memory without file edits or publishing changes. Expect fewer setups, especially in quiet markets; zero qualifying setups is preferable to issuing an economically tiny scenario.
 
 ## Archive and delivery
 
@@ -71,77 +93,37 @@ The shipped configuration enables **shadow collection** (`setup_enabled: true`, 
 
 `setups` is an operator-only, read-only view of recent setup records, source issues and screen reasons. `screen` distinguishes a normal absence of qualifying ranges, cooldowns and liquidity exclusions from missing data. It does not contain a win rate. The existing `outcomes` command still evaluates original market alerts only; it is not a setup backtester.
 
-## Upgrade on Ubuntu 22.04
+## Managed releases on Ubuntu 22.04
 
-Each command below is separate. Stop on any failure. No SSH deployment is performed by the development agent.
+The server now receives tested releases through `release/market-watch`; see [DEPLOYMENT.md](DEPLOYMENT.md). The installed helper creates backups and preserves the persistent configuration, database, credentials and publication settings. No root-console install command is needed for a routine release. The original checkout is retained but is no longer the live code directory.
 
 ```bash
-# Enter the deployed checkout.
-cd /opt/tokn-market-watch
+# Enter the active release directory.
+cd "$(systemctl show tokn-market-watch.service --property=WorkingDirectory --value)"
 ```
 
 ```bash
-# Pause collection so code and schema cannot change during a running cycle.
-sudo systemctl stop tokn-market-watch.timer tokn-market-watch.service
-```
-
-```bash
-# Create a consistent pre-upgrade backup; this fails if the destination exists.
-sudo python3 -m market_watch --database /var/lib/tokn-market-watch/state.sqlite3 backup /var/lib/tokn-market-watch/pre-setup-v1.sqlite3
-```
-
-```bash
-# Check for local configuration edits before pulling. Do not discard them.
-git status --short
-```
-
-```bash
-# Fast-forward the reviewed feature branch. Stop if local changes cause a conflict.
-git pull --ff-only origin feature/tokn-market-watch
-```
-
-```bash
-# Run offline verification; no network data or messages are sent by these tests.
-python3 -m unittest discover -s market_watch/tests -v
-```
-
-```bash
-# Explicitly enable shadow collection and preserve a dated copy of the complete prior config.
-sudo python3 -m market_watch.setup_config --config config/market_watch.json --mode shadow
-```
-
-```bash
-# Preview a fictional confirmation card with no network access or publishing.
+# Preview a fictional confirmation card without sending anything.
 python3 -m market_watch.setup_preview --kind setup_triggered
 ```
 
 ```bash
-# Start one service cycle using the existing protected environment and database path.
-sudo systemctl start tokn-market-watch.service
+# Inspect actual setup records and cost-screen reasons.
+sudo python3 -m market_watch --config /opt/tokn-market-watch/config/market_watch.json --database /var/lib/tokn-market-watch/state.sqlite3 setups --limit 5
 ```
 
 ```bash
-# Inspect setup source coverage and any recorded candidates.
-sudo python3 -m market_watch --config config/market_watch.json --database /var/lib/tokn-market-watch/state.sqlite3 setups --limit 10
+# Check collector cadence, source health and unresolved deliveries.
+sudo python3 -m market_watch --config /opt/tokn-market-watch/config/market_watch.json --database /var/lib/tokn-market-watch/state.sqlite3 check
 ```
 
-```bash
-# Resume the recurring timer after the upgrade succeeds.
-sudo systemctl start tokn-market-watch.timer
-```
-
-```bash
-# Check collector cadence, primary setup data and unresolved deliveries.
-sudo python3 -m market_watch --config config/market_watch.json --database /var/lib/tokn-market-watch/state.sqlite3 check
-```
-
-An initial `closed_candle_missing_or_late` is possible if installation occurs late in a five-minute bucket. Check after the next closed bucket. Zero active setups is normal when no range qualifies. Optional source failures are recorded separately; a primary failure or a setup check more than ten minutes old fails `check` when setup collection is enabled.
+An initial `closed_candle_missing_or_late` is possible late in a five-minute bucket. Check after the next closed bucket. Zero active setups is normal when no range qualifies or the cost screen rejects it. Optional source failures are recorded separately; a primary failure or a setup check more than ten minutes old fails `check` when setup collection is enabled.
 
 ### Publish newly formed setups after inspecting shadow coverage
 
 ```bash
-# Enter the deployed checkout.
-cd /opt/tokn-market-watch
+# Enter the active release directory.
+cd "$(systemctl show tokn-market-watch.service --property=WorkingDirectory --value)"
 ```
 
 ```bash
@@ -151,7 +133,7 @@ sudo systemctl stop tokn-market-watch.timer tokn-market-watch.service
 
 ```bash
 # Enable paid setup delivery for new setups and save a dated prior-config backup.
-sudo python3 -m market_watch.setup_config --config config/market_watch.json --mode live
+sudo python3 -m market_watch.setup_config --config /opt/tokn-market-watch/config/market_watch.json --mode live
 ```
 
 ```bash

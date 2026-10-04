@@ -9,6 +9,7 @@ import json
 from .config import Config
 from .message_preview import render_html
 from .setup_cards import setup_card
+from .setup_costs import confirmation_economics, screen_candidate
 from .setup_data import Candle
 from .setup_rules import candidate
 
@@ -26,6 +27,9 @@ def examples():
     spec = candidate(cfg,'ETH',rows,NOW)
     if not spec:
         raise RuntimeError('invalid fictional preview fixture')
+    spec, _ = screen_candidate(spec, cfg)
+    if not spec:
+        raise RuntimeError('fictional preview must pass the cost screen')
     book = {'observed_at':NOW-1,'received_at':NOW,'spread_bps':0.71,
             'bid_depth_usd':248000,'ask_depth_usd':217000}
     context = {'hyperliquid':{'change_15m_pct':.42,'oi_change_pct':2.31,'funding_bps_8h':1.2},
@@ -65,11 +69,12 @@ def examples():
             detail['candle'].update(open=spec['trigger'],high=spec['target_1']+.1*spec['atr'],
                                    low=spec['invalidation']-.1*spec['atr'],close=spec['trigger'])
         if stage=='triggered':
-            quote=spec['trigger']+.2*spec['atr']
+            quote=(spec['trigger']+spec['entry_limit'])/2
             detail.update(indicative_quote=quote,
+                          execution_costs=confirmation_economics(spec,quote),
                           remaining_reward_risk=(spec['target_2']-quote)/(quote-spec['invalidation']))
             detail['candle'].update(open=spec['level']+.05*spec['atr'],high=quote+.1*spec['atr'],
-                                   low=spec['level']-.1*spec['atr'],close=quote-.1)
+                                   low=spec['level']-.1*spec['atr'],close=(quote+spec['trigger'])/2)
         if stage in {'paused','unavailable'}:
             detail['context']={'missing':['Hyperliquid book','OKX 15m','Coinbase spot']}
             detail.pop('candle');detail.pop('volume_ratio')
@@ -80,6 +85,7 @@ def examples():
     # A separate short scenario demonstrates direction-aware language and levels.
     mirrored=[replace(r,open=5600-r.open,high=5600-r.low,low=5600-r.high,close=5600-r.close) for r in rows]
     short=candidate(cfg,'ETH',mirrored,NOW)
+    short, _ = screen_candidate(short, cfg)
     track={'id':'DEMO-ETH-SHORT-005','spec':short,'stage':'forming'}
     short_context=deepcopy(context)
     for venue in ('hyperliquid','okx'):

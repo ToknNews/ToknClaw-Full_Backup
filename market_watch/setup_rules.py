@@ -4,6 +4,7 @@ from dataclasses import asdict
 from statistics import mean
 
 from .setup_data import INTERVAL
+from .setup_costs import confirmation_economics
 
 TERMINAL = {'completed', 'invalidated', 'expired', 'ambiguous', 'unavailable', 'cancelled'}
 
@@ -123,6 +124,12 @@ def transition(spec, track, candle, book, now):
     quote = book['ask'] if sign == 1 else book['bid']
     quote_ok = sign * (quote - spec['trigger']) >= 0 and sign * (quote - spec['entry_limit']) <= 0
     if confirmed and retested and within_entry and quote_ok and sign * (close - candle.open) > 0:
+        costs = confirmation_economics(spec, quote)
+        if costs is not None:
+            detail['execution_costs'] = costs
+            if (costs['target_1']['net_reward'] <= 0
+                    or costs['target_2']['net_rr'] + 1e-10 < spec['cost_screen']['policy']['min_target_2_net_rr']):
+                return stage, 'net_reward_risk_too_low', detail
         detail.update(trigger_close=close, indicative_quote=quote,
                       remaining_reward_risk=abs(spec['target_2'] - quote) / abs(quote - spec['invalidation']))
         return 'triggered', 'retest_closed_and_quote_in_band', detail

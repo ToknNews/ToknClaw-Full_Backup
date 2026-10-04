@@ -29,5 +29,10 @@
   "followup_max_updates": 4,
   "setup_enabled": true,
   "setup_publish": false,
-  "setup_coinbase_enabled": true
+  "setup_coinbase_enabled": true,
+  "setup_fee_bps_per_side": 4.5,
+  "setup_slippage_bps_per_side": 2.0,
+  "setup_min_atr_bps": 10.0,
+  "setup_min_risk_bps": 10.0,
+  "setup_min_net_rr": 1.5
 }
