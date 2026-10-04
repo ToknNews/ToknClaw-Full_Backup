@@ -1,0 +1,106 @@
+name: Market Watch deployment
+
+# Neither feature pushes nor pull requests receive production credentials.
+# The connection branch only runs `probe`; it cannot select a release command.
+on:
+  push:
+    branches:
+      - ops/market-watch-connect
+      - release/market-watch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: market-watch-production
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    if: github.repository == 'ToknNews/ToknClaw-Full_Backup'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.10'
+      - name: Test exact release without deployment secrets
+        run: python -m unittest discover -s market_watch/tests -v
+
+  connect-or-deploy:
+    needs: tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    environment: market-watch-production
+    steps:
+      # No repository checkout or third-party action runs with these secrets.
+      - name: Verify SSH identity and run the restricted command
+        env:
+          TOKN_SSH_HOST: ${{ secrets.TOKN_SSH_HOST }}
+          TOKN_SSH_KEY: ${{ secrets.TOKN_SSH_KEY }}
+          TOKN_KNOWN_HOSTS: ${{ secrets.TOKN_KNOWN_HOSTS }}
+          TOKN_SSH_PORT: ${{ vars.TOKN_SSH_PORT || '22' }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+
+          os.umask(0o077)
+          required = ('TOKN_SSH_HOST', 'TOKN_SSH_KEY', 'TOKN_KNOWN_HOSTS')
+          missing = [name for name in required if not os.environ.get(name, '').strip()]
+          if missing:
+              raise SystemExit('Add these environment secrets first: ' + ', '.join(missing))
+          host = os.environ['TOKN_SSH_HOST'].strip()
+          port = os.environ['TOKN_SSH_PORT']
+          if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.:-]{0,252}', host)
+                  or not port.isdecimal() or not 1 <= int(port) <= 65535):
+              raise SystemExit('Invalid SSH host or port configuration.')
+          branch = os.environ['GITHUB_REF']
+          commit = os.environ['GITHUB_SHA']
+          if not re.fullmatch(r'[0-9a-f]{40}', commit):
+              raise SystemExit('Invalid release SHA.')
+          if branch == 'refs/heads/ops/market-watch-connect':
+              command = 'probe'
+          elif branch == 'refs/heads/release/market-watch':
+              command = 'deploy ' + commit
+          else:
+              raise SystemExit('This branch is not authorized for the deployment workflow.')
+          with tempfile.TemporaryDirectory(prefix='tokn-ssh-') as directory:
+              key = Path(directory) / 'key'
+              known = Path(directory) / 'known_hosts'
+              key.write_text(os.environ['TOKN_SSH_KEY'].strip() + '\n')
+              known.write_text(os.environ['TOKN_KNOWN_HOSTS'].strip() + '\n')
+              key.chmod(0o600)
+              known.chmod(0o600)
+              args = ['ssh', '-F', '/dev/null', '-T', '-i', str(key), '-p', port,
+                      '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
+                      '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
+                      '-o', 'StrictHostKeyChecking=yes', '-o', 'HostKeyAlias=tokn-market-watch',
+                      '-o', 'HostKeyAlgorithms=ssh-ed25519',
+                      '-o', 'UserKnownHostsFile=' + str(known),
+                      '-o', 'GlobalKnownHostsFile=/dev/null',
+                      '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15',
+                      '-o', 'ServerAliveCountMax=3', 'tokn-deploy@' + host, command]
+              # Endpoints, private keys and SSH diagnostics are never printed.
+              try:
+                  result = subprocess.run(args, capture_output=True, timeout=1250)
+              except (OSError, subprocess.TimeoutExpired):
+                  raise SystemExit('SSH could not complete. A started deployment worker may '
+                                   'still be running; inspect its receipt before retrying.')
+              print(result.stdout.decode(errors='replace'))
+              if result.returncode:
+                  print('Connection/deployment did not pass. Check the server receipt and '
+                        'the configured host, firewall, key and pinned host identity.')
+                  print('Exit status:', result.returncode)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                  summary.write('Market Watch command: `' + command + '`\n\n')
+                  summary.write('Result: ' + ('passed' if result.returncode == 0 else 'needs review') + '\n')
+              raise SystemExit(result.returncode)
+          PY
