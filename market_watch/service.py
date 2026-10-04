@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .engine import assess, health_event, market_alerts, summaries
 from .followups import advance_watches, start_watch
+from .setups import advance_setups
 
 
 @contextmanager
@@ -23,7 +24,7 @@ def process_lock(database):
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def run_cycle(config, store, observations, errors, routes, now):
+def run_cycle(config, store, observations, errors, routes, now, setup_batch=None):
     accepted, issues = assess(config, observations, errors, now)
     with store.db:
         store.add_observations(accepted)
@@ -37,5 +38,6 @@ def run_cycle(config, store, observations, errors, routes, now):
             start_watch(config, store, event, event_id)
             result.append({'id': event_id, 'kind': event.kind, 'audience': event.audience, 'text': event.text})
         result += advance_watches(config, store, observations, errors, routes, now)
+        result += advance_setups(config, store, setup_batch, accepted, routes, now)
         store.record_cycle(now, issues, len(accepted))
-    return {'observations': len(accepted), 'issues': issues, 'events': result}
+    return {'observations': len(accepted), 'issues': issues, 'events': result, 'setups': store.setup_status()}

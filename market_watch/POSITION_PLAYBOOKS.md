@@ -1,5 +1,7 @@
 # Position playbooks and historical alert outcomes
 
+> Setup Engine v1 is now implemented separately. For the current schema-3 upgrade procedure, shadow/live modes and price-defined setup cards, use [SETUP_ENGINE.md](SETUP_ENGINE.md). The older rollout instructions below describe their original release.
+
 This release adds conditional positioning guidance and an operator-only outcome report. It does not add a tested entry/stop/target model or establish positive expectancy. Branding and the database schema remain unchanged.
 
 ## What subscribers receive now

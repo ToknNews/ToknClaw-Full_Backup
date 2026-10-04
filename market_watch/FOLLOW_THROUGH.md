@@ -1,5 +1,7 @@
 # Alert follow-through
 
+> Setup Engine v1 is now implemented separately. For the current schema-3 upgrade procedure, shadow/live modes and price-defined setup cards, use [SETUP_ENGINE.md](SETUP_ENGINE.md). The older rollout instructions below describe their original release.
+
 New paid alerts now receive a persistent watch. Updates use the existing Discord/Telegram delivery system and reference the original alert's `Watch ref`. This is sampled condition tracking, not trade execution, a stop-loss system or a performance claim.
 
 ## Subscriber behavior

@@ -35,6 +35,22 @@ class Config:
     followup_horizon_minutes: int = 60
     followup_max_updates: int = 4
     rule_version: str = "market-watch-v1"
+    setup_enabled: bool = False
+    setup_publish: bool = False
+    setup_coinbase_enabled: bool = True
+    setup_range_bars: int = 12
+    setup_atr_bars: int = 14
+    setup_history_bars: int = 64
+    setup_close_grace_seconds: int = 15
+    setup_max_delay_seconds: int = 150
+    setup_expiry_minutes: int = 60
+    setup_tracking_hours: int = 24
+    setup_cooldown_minutes: int = 60
+    setup_max_new_per_hour: int = 3
+    setup_breakout_volume_ratio: float = 1.2
+    setup_max_spread_bps: float = 8.0
+    setup_min_visible_depth_usd: float = 10000.0
+    setup_version: str = "breakout-retest-v1"
 
     def __post_init__(self):
         if self.okx_region not in {"global", "us", "eea", "tr"}:
@@ -80,6 +96,31 @@ class Config:
             raise ValueError("baseline tolerance must be shorter than lookback")
         if not isinstance(self.database, str) or not self.database or not self.rule_version:
             raise ValueError("database and rule_version are required")
+        for name in ('setup_enabled', 'setup_publish', 'setup_coinbase_enabled'):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(name + ' must be a boolean')
+        for name, lower, upper in (
+                ('setup_range_bars', 6, 36), ('setup_atr_bars', 7, 28),
+                ('setup_history_bars', 48, 200), ('setup_close_grace_seconds', 5, 30),
+                ('setup_max_delay_seconds', 60, 180), ('setup_expiry_minutes', 15, 240),
+                ('setup_tracking_hours', 1, 48), ('setup_cooldown_minutes', 15, 1440),
+                ('setup_max_new_per_hour', 1, 6)):
+            value = getattr(self, name)
+            if type(value) is not int or not lower <= value <= upper:
+                raise ValueError(name + ' outside supported bounds')
+        if self.setup_history_bars < max(self.setup_range_bars, self.setup_atr_bars, 20) + 2:
+            raise ValueError('setup history must cover every full indicator window')
+        for name, lower, upper in (('setup_breakout_volume_ratio', 1.0, 5.0),
+                                   ('setup_max_spread_bps', 0.1, 50.0),
+                                   ('setup_min_visible_depth_usd', 1000.0, 10000000.0)):
+            value = getattr(self, name)
+            if (isinstance(value, bool) or not isinstance(value, (float, int))
+                    or not math.isfinite(value) or not lower <= value <= upper):
+                raise ValueError(name + ' outside supported bounds')
+        if self.setup_enabled and 'hyperliquid' not in self.venues:
+            raise ValueError('setup v1 requires Hyperliquid as the fixed primary venue')
+        if self.setup_version != 'breakout-retest-v1':
+            raise ValueError('unsupported setup version')
         ZoneInfo(self.timezone)
 
 

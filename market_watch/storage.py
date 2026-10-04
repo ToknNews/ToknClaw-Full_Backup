@@ -5,14 +5,15 @@ from pathlib import Path
 import sqlite3
 
 from .models import Observation, event_id as make_event_id
+from .setup_storage import SCHEMA as SETUP_SCHEMA, SetupArchive
 
 
-class Store:
+class Store(SetupArchive):
     def __init__(self, path, readonly=False):
         if readonly:
             self.db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=20)
             self.db.row_factory = sqlite3.Row
-            if self.db.execute("PRAGMA user_version").fetchone()[0] not in (1, 2):
+            if self.db.execute("PRAGMA user_version").fetchone()[0] not in (1, 2, 3):
                 self.db.close()
                 raise ValueError("unsupported or uninitialized archive schema")
             return
@@ -21,7 +22,7 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
-        if self.db.execute("PRAGMA user_version").fetchone()[0] not in (0, 1, 2):
+        if self.db.execute("PRAGMA user_version").fetchone()[0] not in (0, 1, 2, 3):
             self.db.close()
             raise ValueError("unsupported archive schema version")
         try:
@@ -68,7 +69,8 @@ class Store:
                     sequence INTEGER NOT NULL,
                     UNIQUE(original_id, sequence)
                 );
-                PRAGMA user_version=2;
+            """ + SETUP_SCHEMA + """
+                PRAGMA user_version=3;
                 COMMIT;
             """)
         except sqlite3.Error:
@@ -200,6 +202,7 @@ class Store:
         cycle = self.db.execute("SELECT * FROM cycles ORDER BY id DESC LIMIT 1").fetchone()
         return {
             "watches": self.watch_status(),
+            "setups": self.setup_status(),
             "last_cycle_at": cycle['completed_at'] if cycle else None,
             "cycle_age_seconds": round(now - cycle['completed_at'], 1) if cycle else None,
             "source_issues": json.loads(cycle['issues']) if cycle else {"system": "not_started"},

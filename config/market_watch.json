@@ -26,5 +26,8 @@
   "followup_enabled": true,
   "followup_check_minutes": 5,
   "followup_horizon_minutes": 60,
-  "followup_max_updates": 4
+  "followup_max_updates": 4,
+  "setup_enabled": true,
+  "setup_publish": false,
+  "setup_coinbase_enabled": true
 }

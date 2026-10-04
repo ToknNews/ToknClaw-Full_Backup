@@ -283,7 +283,7 @@ class FollowupTests(StoreCase):
         self.assertEqual(legacy.db.execute('PRAGMA user_version').fetchone()[0], 1)
         legacy.close()
         self.store = Store(self.path)
-        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0], 2)
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0], 3)
         self.assertEqual(self.store.status(NOW)['events'], 1)
         self.assertEqual(self.store.status(NOW)['deliveries']['sent'], 1)
         self.assertEqual(self.store.watch_status()['active'], 0)

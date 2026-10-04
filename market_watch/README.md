@@ -21,7 +21,8 @@ References checked September 28, 2026:
 
 | Component | Behavior |
 | --- | --- |
-| Public collectors | Hyperliquid asset contexts and OKX funding/mark/open-interest endpoints; no authenticated trading API |
+| Public collectors | Hyperliquid asset contexts and OKX funding/mark/open-interest endpoints; setup ingestion additionally supports closed candles, L2 books and a Coinbase spot reference |
+| Setup Engine v1 | Frozen breakout/retest levels, volume and liquidity checks, prospective lifecycle, optional cross-venue context and branded cards; shadow collection is enabled by default; see `SETUP_ENGINE.md` |
 | Units | Preserve source funding rates/intervals; compare in basis points per 8 hours; OI growth uses coin units to avoid counting price appreciation as new positions |
 | Data health | Missing, nonfinite, stale, future, duplicate and inconsistent measurements fail closed |
 | Event rules | Confirmed price/OI expansion, elevated funding, and cross-venue funding divergence |
@@ -36,7 +37,7 @@ References checked September 28, 2026:
 
 The default requires two fresh venues before market comparisons are published. Missing one venue pauses that asset's analysis. Other healthy assets can continue. A degraded/recovered notice is archived and may be delivered to the paid destination. Failed reads never become zero funding, zero OI or invented prices.
 
-Existing installations: use the backup, schema-upgrade and rollout steps in [FOLLOW_THROUGH.md](FOLLOW_THROUGH.md). The update adds tracking tables and starts watches for new alerts only.
+Existing installations: use the pre-upgrade backup, schema-3 migration and rollout steps in [SETUP_ENGINE.md](SETUP_ENGINE.md). Setup collection starts in shadow mode; existing alert publishing is unchanged. The full visual gallery is [SETUP_PREVIEW.html](SETUP_PREVIEW.html).
 
 ## Run locally without publishing
 

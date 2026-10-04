@@ -16,6 +16,7 @@ from .http import JsonClient
 from .outcomes import report as outcome_report
 from .service import process_lock, run_cycle
 from .sources import collect
+from .setup_data import collect_setup_data
 from .storage import Store
 
 
@@ -33,6 +34,8 @@ def main(argv=None):
     outcomes = sub.add_parser('outcomes', help='read-only historical alert mark changes, not trading returns')
     outcomes.add_argument('--days', type=int, default=30)
     outcomes.add_argument('--details', action='store_true', help='include every included alert and its horizon samples')
+    setups = sub.add_parser('setups', help='read-only setup history and source coverage; not trading performance')
+    setups.add_argument('--limit', type=int, default=20)
     backup = sub.add_parser('backup', help='consistent SQLite backup; destination must not exist')
     backup.add_argument('destination')
     resolve = sub.add_parser('resolve-delivery', help='resolve an uncertain send after checking the channel')
@@ -51,9 +54,11 @@ def main(argv=None):
                 raise ValueError('sending requires MARKET_WATCH_ENABLE_DELIVERY=1')
             if not any(r.audience == 'paid' for r in routes):
                 raise ValueError('configure at least one paid destination before sending')
+        if args.command == 'setups' and not 1 <= args.limit <= 100:
+            raise ValueError('setup limit must be between 1 and 100')
         if args.command == 'export' and not 1 <= args.limit <= 10000:
             raise ValueError('export limit must be between 1 and 10000')
-        readonly = args.command in {"status", "check", "export", "backup", "outcomes"}
+        readonly = args.command in {"status", "check", "export", "backup", "outcomes", "setups"}
         if readonly and not Path(db).is_file():
             raise ValueError("archive not initialized; collect a cycle first")
         with (nullcontext() if readonly else process_lock(db)):
@@ -62,16 +67,20 @@ def main(argv=None):
                 client = JsonClient(config.request_timeout_seconds)
                 if args.command == 'run':
                     observations, errors = collect(config, client)
-                    output = run_cycle(config, store, observations, errors, routes, time.time())
+                    setup_batch = collect_setup_data(config, client, store)
+                    output = run_cycle(config, store, observations, errors, routes, time.time(), setup_batch)
                     output['sending_enabled'] = args.send
                     if args.send:
                         output['delivery'] = dispatch(store, routes, client)
                     print(json.dumps(output, indent=2, allow_nan=False))
-                    return 0 if not output['issues'] else 2
+                    setup_issues = output['setups']['health'].get('primary_issues', {})
+                    return 0 if not output['issues'] and not setup_issues else 2
                 if args.command == 'outcomes':
                     with store.db:
                         store.db.execute('BEGIN')
                         output = outcome_report(store, time.time(), args.days, args.details)
+                elif args.command == 'setups':
+                    output = store.setup_status(args.limit)
                 elif args.command == 'export':
                     output = store.export_events(args.limit)
                 elif args.command == 'resolve-delivery':
@@ -90,7 +99,11 @@ def main(argv=None):
                 print(json.dumps(output, indent=2, allow_nan=False))
                 if args.command == 'check':
                     age = output['cycle_age_seconds']
-                    bad = output['source_issues'] or output['unresolved'] or age is None or age > config.max_age_seconds
+                    setup_health = output['setups']['health']
+                    setup_bad = config.setup_enabled and (
+                        setup_health.get('status') not in {'ready'}
+                        or time.time() - setup_health.get('checked_at', 0) > 600)
+                    bad = output['source_issues'] or output['unresolved'] or age is None or age > config.max_age_seconds or setup_bad
                     return 2 if bad else 0
             finally:
                 store.close()

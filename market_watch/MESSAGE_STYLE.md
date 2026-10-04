@@ -1,5 +1,7 @@
 # Tokn Market Watch message system
 
+> Setup Engine v1 is now implemented separately. For the current schema-3 upgrade procedure, shadow/live modes and price-defined setup cards, use [SETUP_ENGINE.md](SETUP_ENGINE.md). The older rollout instructions below describe their original release.
+
 ## Existing Tokn identity
 
 New Discord messages use the original Tokn coin as the webhook avatar and author icon, with the sender name **Tokn Market Watch**. Alerts and follow-ups add a coin thumbnail. Scheduled paid briefs and the free sample include the existing circuit-board banner after their evidence. Data-health cards use the small icon alone to stay compact.
