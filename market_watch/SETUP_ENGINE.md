@@ -93,6 +93,11 @@ The shipped configuration enables **shadow collection** (`setup_enabled: true`, 
 
 `setups` is an operator-only, read-only view of recent setup records, source issues and screen reasons. `screen` distinguishes a normal absence of qualifying ranges, cooldowns and liquidity exclusions from missing data. It does not contain a win rate. The existing `outcomes` command still evaluates original market alerts only; it is not a setup backtester.
 
+For an explicit historical window, the operator-only [shadow scorecard](SCORECARD.md)
+counts distinct formations and carry-in watches from immutable events, separates
+legacy/cost-policy cohorts and pre-retest/post-retest paths, and discloses screening
+retries and missing coverage. It does not infer fills or trading performance.
+
 ## Managed releases on Ubuntu 22.04
 
 The server now receives tested releases through `release/market-watch`; see [DEPLOYMENT.md](DEPLOYMENT.md). The installed helper creates backups and preserves the persistent configuration, database, credentials and publication settings. No root-console install command is needed for a routine release. The original checkout is retained but is no longer the live code directory.
