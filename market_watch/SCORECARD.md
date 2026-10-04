@@ -119,18 +119,27 @@ measured. A target touch is not an execution receipt or proven profitable trade.
 ## Screening, retries and coverage
 
 Screen evidence comes only from existing `setup_samples.health.screen` and
-`screen_details`. The **last archived attempt before cutoff per asset and
-requested five-minute decision close** wins, ordered by collection time then row
-ID. Retries do not add opportunities; an earlier rejection superseded by a later
-passing attempt in the same bucket is not counted as another rejection. The raw
-asset-attempt count and superseded-retry count disclose this reduction. Deduplication
-precedes policy/mode grouping, including when a policy changes during retries.
+`screen_details`. For each asset/requested five-minute decision close, the
+**latest health sample** and **latest explicit valid cost decision** are retained
+separately, ordered by collection time then row ID. A tracking-only retry has no
+new cost decision: it must not erase the acceptance that formed the watch. A
+genuine later explicit cost decision supersedes the earlier decision, including
+a rejection followed by acceptance. Retries do not add opportunities.
+
+`cohorts` describes latest health/screen observations. `cost_decision_cohorts`
+describes the retained explicit cost decisions with their own denominators. Raw
+asset-attempt counts and explicit-cost-attempt counts each disclose their own
+deduplication. Both populations deduplicate before grouping or mode exclusion.
+If policy/publication mode changes only in a later tracking sample, the earlier
+decision keeps its recorded context. `health_context_changed_since_cost_decision`
+discloses these differences; the health and cost populations must not be conflated.
 
 Both sample collection time and requested decision close must fall in the report
 window. A late retry for an earlier decision close is disclosed separately.
-Live-publication buckets are excluded from shadow screen counts after deduplication.
-Screen cohorts use the **sample's policy**, not the policy of an active older
-watch. Pre-cost or missing policy metadata is `unrecorded`, never backfilled.
+Live-publication health buckets and cost-decision buckets are excluded separately
+using their respective recorded publication modes. Each cohort uses its own
+**sample's policy**, not the policy of an active older watch. Pre-cost or missing
+health policy metadata is `unrecorded`, never backfilled.
 
 `screen_counts` includes tracking states and noncandidate gates such as cooldown,
 no range, liquidity and source issues. These are not all cost rejections.
@@ -186,4 +195,7 @@ python3 -m unittest discover -s market_watch/tests -v
 Fixtures cover empty archives, exact boundaries, carry-in, mixed policies, retries,
 repeated updates, pre-entry failure, first-target then invalidation, ambiguity,
 tracking gaps, paused/open cutoffs, frozen estimates, missing/old archives,
-unchanged archive bytes/tables and a concurrent write between read queries.
+unchanged archive bytes/tables and a concurrent write between read queries. A
+real-writer synthetic fixture preserves an accepted BTC screen when missing ETH
+data causes a same-bucket tracking retry. Separate cases exercise policy/mode
+changes and genuinely superseding cost decisions.

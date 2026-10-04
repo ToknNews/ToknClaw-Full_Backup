@@ -71,11 +71,11 @@ class ScorecardTests(unittest.TestCase):
         self.event(name, 'triggered', at+600, 'retest_closed_and_quote_in_band',
                    execution_costs={'target_2': {'net_rr': 1.8}})
 
-    def sample(self, close=START, at=None, screens=None, reasons=None, *, publish=False, policy=True):
+    def sample(self, close=START, at=None, screens=None, reasons=None, *, publish=False, policy=True, fee=4.5):
         health = {'screen': screens or {'BTC': 'targets_do_not_cover_costs'},
                   'publishing': publish, 'primary_issues': {}, 'screen_details': {}}
         if policy:
-            health['cost_policy'] = policy_for(Config())
+            health['cost_policy'] = policy_for(Config(setup_fee_bps_per_side=fee))
         if reasons is not None:
             health['screen_details']['BTC'] = {'policy': health.get('cost_policy'), 'reasons': reasons}
         with self.store.db:
@@ -186,7 +186,7 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual(output['raw_asset_attempts'], 5)
         self.assertEqual(output['distinct_asset_decision_buckets'], 4)
         self.assertEqual(output['superseded_retry_attempts'], 1)
-        btc = next(c for c in output['cohorts'] if c['asset'] == 'BTC')
+        btc = next(c for c in output['cost_decision_cohorts'] if c['asset'] == 'BTC')
         self.assertEqual(btc['cost_screened_buckets'], 2)
         self.assertEqual(btc['cost_rejected_buckets'], 1)
         self.assertEqual(btc['multi_reason_counts'], {'targets_do_not_cover_costs': 1, 'volatility_too_small': 1})
@@ -198,7 +198,7 @@ class ScorecardTests(unittest.TestCase):
         self.sample(reasons=['volatility_too_small'])
         self.sample(at=START+80, screens={'BTC': 'forming'}, reasons=[])
         self.sample(at=END, reasons=['volatility_too_small'])
-        group = self.result()['screening']['cohorts'][0]
+        group = self.result()['screening']['cost_decision_cohorts'][0]
         self.assertEqual(group['cost_rejected_buckets'], 0)
         self.assertEqual(group['cost_accepted_buckets'], 1)
 
@@ -252,7 +252,44 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual(output['populations']['formed_in_window']['distinct_setups'], 1)
         self.assertEqual(output['setups'][0]['evidence_issues'], [])
         self.assertEqual(output['cohorts'][0]['cost_policy_version'], 'execution-costs-v1')
-        self.assertEqual(output['screening']['cohorts'][0]['cost_accepted_buckets'], 1)
+        self.assertEqual(output['screening']['cost_decision_cohorts'][0]['cost_accepted_buckets'], 1)
+
+    def test_real_writer_tracking_retry_does_not_erase_cost_acceptance(self):
+        from test_setups import history, batch, NOW
+        from market_watch.service import run_cycle
+        cfg = Config(assets=('BTC', 'ETH'), setup_enabled=True, setup_publish=False, summary_hours=())
+        # ETH's missing data causes a retry while BTC is already tracking a formed watch.
+        for now in (NOW, NOW+60):
+            run_cycle(cfg, self.store, [], {}, [], now, batch(history(), now))
+        output = self.result(NOW-30, NOW+61)
+        self.assertEqual(output['populations']['formed_in_window']['distinct_setups'], 1)
+        btc = next(c for c in output['screening']['cost_decision_cohorts'] if c['asset'] == 'BTC')
+        self.assertEqual(btc['cost_screened_buckets'], 1)
+        self.assertEqual(btc['cost_accepted_buckets'], 1)
+
+    def test_tracking_policy_mode_changes_do_not_relabel_earlier_cost_decisions(self):
+        self.sample(reasons=[])
+        self.sample(at=START+80, screens={'BTC': 'forming'}, publish=True, fee=5.)
+        output = self.result()['screening']
+        self.assertEqual(output['live_buckets_excluded'], 1)
+        self.assertEqual(output['live_cost_decision_buckets_excluded'], 0)
+        self.assertEqual(output['health_context_changed_since_cost_decision'], 1)
+        self.assertEqual(output['cost_decision_cohorts'][0]['sample_cost_policy']['fee_bps_per_side'], 4.5)
+        self.assertEqual(output['cost_decision_cohorts'][0]['cost_accepted_buckets'], 1)
+
+    def test_genuine_new_cost_decision_supersedes_earlier_policy_and_mode(self):
+        self.sample(reasons=['volatility_too_small'])
+        self.sample(at=START+80, reasons=[], fee=5.)
+        output = self.result()['screening']
+        self.assertEqual(output['explicit_cost_decision_attempts'], 2)
+        self.assertEqual(output['distinct_explicit_cost_decision_buckets'], 1)
+        self.assertEqual(output['superseded_cost_decision_attempts'], 1)
+        self.assertEqual(output['cost_decision_cohorts'][0]['sample_cost_policy']['fee_bps_per_side'], 5.)
+        self.assertEqual(output['cost_decision_cohorts'][0]['cost_accepted_buckets'], 1)
+        self.sample(at=START+100, reasons=[], publish=True)
+        output = self.result()['screening']
+        self.assertEqual(output['cost_decision_cohorts'], [])
+        self.assertEqual(output['live_cost_decision_buckets_excluded'], 1)
 
     def test_report_preserves_all_archive_tables_and_files_and_cli_avoids_runtime(self):
         self.triggered('unchanged')

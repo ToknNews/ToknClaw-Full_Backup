@@ -240,6 +240,7 @@ def _estimate_summary(records):
 
 def _screening(db, start, end):
     buckets, invalid, raw_attempts, outside = {}, 0, 0, 0
+    cost_decisions, cost_attempts, unknown_details = {}, 0, 0
     for row in db.execute('SELECT id,collected_at,payload FROM setup_samples WHERE collected_at>=? '
                           'AND collected_at<? ORDER BY collected_at,id', (start, end)):
         try:
@@ -260,13 +261,27 @@ def _screening(db, start, end):
                     raise ValueError('invalid screen')
             for asset, decision in screen.items():
                 raw_attempts += 1
-                buckets[(asset, close)] = {'asset': asset, 'decision': decision,
+                item = {'asset': asset, 'decision': decision,
                     'collected_at': row['collected_at'], 'health': health,
                     'detail': health.get('screen_details', {}).get(asset, {})}
+                buckets[(asset, close)] = item
+                detail = item['detail']
+                if not isinstance(detail, dict):
+                    unknown_details += 1
+                elif 'reasons' in detail or 'policy' in detail:
+                    reasons = detail.get('reasons')
+                    if (not isinstance(reasons, list) or any(not isinstance(r, str) for r in reasons)
+                            or not isinstance(detail.get('policy'), dict)
+                            or detail['policy'] != health.get('cost_policy')):
+                        unknown_details += 1
+                    else:
+                        cost_attempts += 1
+                        # Tracking-only retries carry no new cost decision and cannot erase one.
+                        cost_decisions[(asset, close)] = item
         except (ValueError, TypeError, KeyError, AttributeError):
             invalid += 1
-    groups, assets = {}, defaultdict(list)
-    live, unknown_details = 0, 0
+    groups, cost_groups, assets = {}, {}, defaultdict(list)
+    live, live_costs, context_changes = 0, 0, 0
     for (asset, close), item in sorted(buckets.items()):
         health, detail = item['health'], item['detail']
         assets[asset].append((close, item['collected_at'], bool(health.get('primary_issues', {}).get(asset))))
@@ -278,23 +293,28 @@ def _screening(db, start, end):
                 'policy_version': policy.get('version', 'unrecorded') if isinstance(policy, dict) else 'unrecorded'}
         key = _key(spec)
         group = groups.setdefault(key, {'cohort_id': key, **spec, 'asset_decision_buckets': 0,
-            'screen_counts': Counter(), 'cost_screened_buckets': 0, 'cost_rejected_buckets': 0,
-            'cost_accepted_buckets': 0, 'multi_reason_counts': Counter()})
+                                       'screen_counts': Counter()})
         group['asset_decision_buckets'] += 1
         group['screen_counts'][item['decision']] += 1
-        if not isinstance(detail, dict):
-            unknown_details += 1
+    for bucket, item in sorted(cost_decisions.items()):
+        health, detail = item['health'], item['detail']
+        latest_health = buckets[bucket]['health']
+        context_changes += (health['publishing'] != latest_health['publishing']
+                            or health.get('cost_policy') != latest_health.get('cost_policy'))
+        if health['publishing']:
+            live_costs += 1
             continue
-        if 'reasons' in detail and 'policy' in detail:
-            reasons = detail['reasons']
-            if (not isinstance(reasons, list) or any(not isinstance(r, str) for r in reasons)
-                    or detail['policy'] != policy):
-                unknown_details += 1
-                continue
-            group['cost_screened_buckets'] += 1
-            group['cost_rejected_buckets'] += bool(reasons)
-            group['cost_accepted_buckets'] += not reasons
-            group['multi_reason_counts'].update(set(reasons))
+        policy = detail['policy']
+        spec = {'asset': item['asset'], 'sample_cost_policy': policy,
+                'policy_version': policy.get('version', 'unrecorded')}
+        key = _key(spec)
+        group = cost_groups.setdefault(key, {'cohort_id': key, **spec, 'cost_screened_buckets': 0,
+            'cost_rejected_buckets': 0, 'cost_accepted_buckets': 0, 'multi_reason_counts': Counter()})
+        reasons = detail['reasons']
+        group['cost_screened_buckets'] += 1
+        group['cost_rejected_buckets'] += bool(reasons)
+        group['cost_accepted_buckets'] += not reasons
+        group['multi_reason_counts'].update(set(reasons))
     expected = max(0, math.ceil(end / INTERVAL) - math.ceil(start / INTERVAL))
     coverage = []
     for asset, values in sorted(assets.items()):
@@ -309,15 +329,22 @@ def _screening(db, start, end):
                          'first_decision_close': min(closes), 'last_decision_close': max(closes),
                          'last_collected_at': max(v[1] for v in values)})
     for group in groups.values():
-        for field in ('screen_counts', 'multi_reason_counts'):
-            group[field] = dict(sorted(group[field].items()))
-    return {'deduplication': 'Last archived attempt before cutoff per asset/requested_close; no pooling retries.',
+        group['screen_counts'] = dict(sorted(group['screen_counts'].items()))
+    for group in cost_groups.values():
+        group['multi_reason_counts'] = dict(sorted(group['multi_reason_counts'].items()))
+    return {'deduplication': 'Per asset/requested_close: latest health sample and latest explicit valid cost decision are deduplicated separately before cutoff.',
             'raw_asset_attempts': raw_attempts, 'distinct_asset_decision_buckets': len(buckets),
             'superseded_retry_attempts': raw_attempts-len(buckets), 'invalid_sample_rows': invalid,
+            'explicit_cost_decision_attempts': cost_attempts,
+            'distinct_explicit_cost_decision_buckets': len(cost_decisions),
+            'superseded_cost_decision_attempts': cost_attempts-len(cost_decisions),
+            'health_context_changed_since_cost_decision': context_changes,
             'rows_for_decision_closes_outside_window': outside, 'live_buckets_excluded': live,
+            'live_cost_decision_buckets_excluded': live_costs,
             'invalid_screen_details': unknown_details, 'coverage_by_observed_asset': coverage,
             'asset_universe_limit': 'Only assets present in archived screens are known; absent assets and disabled periods are not reconstructed.',
-            'cohorts': [groups[k] for k in sorted(groups)]}
+            'cohorts': [groups[k] for k in sorted(groups)],
+            'cost_decision_cohorts': [cost_groups[k] for k in sorted(cost_groups)]}
 
 
 def report(path, start, end, display_timezone, include_details=False):
