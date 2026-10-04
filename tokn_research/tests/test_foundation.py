@@ -6,7 +6,7 @@ import math
 import unittest
 
 from tokn_research.contracts import (
-    Bar, ContractError, FeatureResult, Provenance, SeriesKey, TrainingManifest,
+    Bar, ContractError, FeatureResult, Provenance, RecordRef, SeriesKey, TrainingManifest,
 )
 from tokn_research.data.asof import SyntheticArchive
 from tokn_research.data.capabilities import Available, Capability, NotAvailable
@@ -141,6 +141,23 @@ class ContractTests(unittest.TestCase):
         values['fixture_marker'] = 900
         self.assertEqual(feature.values, (('fixture_marker', 10.0),))
 
+    def test_reconstructed_reference_requires_valid_synthetic_lineage_and_interval(self):
+        valid = bar(0).ref
+        malformed = (
+            {'provenance': None}, {'series': 'not-a-series'},
+            {'event_open': stamp(100)}, {'event_close': stamp(11)},
+            {'event_open': ZERO.replace(tzinfo=None)},
+        )
+        for change in malformed:
+            with self.subTest(change=change), self.assertRaises(ContractError):
+                replace(valid, **change)
+
+    def test_reconstructed_reference_normalizes_aware_timezones(self):
+        ref = bar(0).ref
+        converted = replace(ref, event_open=ref.event_open.astimezone(timezone(timedelta(hours=3))))
+        self.assertEqual(converted, ref)
+        self.assertEqual(converted.event_open.tzinfo, timezone.utc)
+
 
 class AvailabilityTests(unittest.TestCase):
     def test_only_strictly_prior_received_and_available_closed_bars_are_visible(self):
@@ -179,7 +196,9 @@ class AvailabilityTests(unittest.TestCase):
                 self.assertEqual(result.evidence_kind, 'synthetic')
 
     def test_two_candle_venues_do_not_create_tick_capability(self):
-        archive = SyntheticArchive((bar(0), replace(bar(0), series=replace(SERIES, venue='fixture-venue-2'))))
+        other = replace(bar(0), series=replace(SERIES, venue='fixture-venue-2'),
+                        provenance=Provenance('synthetic:second-venue', 'bar-0', 0, 'synthetic'))
+        archive = SyntheticArchive((bar(0), other))
         self.assertIsInstance(archive.capabilities(SERIES, stamp(11))[Capability.TWO_VENUE_TICKS], NotAvailable)
 
     def test_quality_flags_are_a_restriction_not_silent_clean_data(self):
@@ -207,6 +226,29 @@ class AvailabilityTests(unittest.TestCase):
     def test_flagged_revision_cannot_fall_back_to_old_clean_data(self):
         archive = SyntheticArchive((bar(0), bar(0, 12, revision=1, received=stamp(12), quality_flags=('incomplete',))))
         self.assertIsInstance(archive.as_of(SERIES, stamp(13)), NotAvailable)
+
+    def test_unrelated_clean_revision_cannot_replace_flagged_lineage(self):
+        first = bar(0, quality_flags=('gap',))
+        for source, record in (('synthetic:unrelated', 'bar-0'),
+                               ('synthetic:fixture', 'unrelated-record'),
+                               ('synthetic:unrelated', 'unrelated-record')):
+            replacement = replace(bar(0, 12, revision=1, received=stamp(12)),
+                                  provenance=Provenance(source, record, 1, 'synthetic'))
+            with self.subTest(source=source, record=record), self.assertRaisesRegex(ContractError, 'REVISION_LINEAGE_MISMATCH'):
+                SyntheticArchive((first, replacement))
+
+    def test_record_identity_cannot_be_reused_for_another_bar_interval(self):
+        first = bar(0)
+        for revision in (0, 1):
+            second = replace(bar(1), provenance=replace(first.provenance, revision=revision))
+            with self.subTest(revision=revision), self.assertRaisesRegex(ContractError, 'RECORD_IDENTITY_REUSED'):
+                SyntheticArchive((first, second))
+
+    def test_record_identity_cannot_be_reused_for_another_series(self):
+        first = bar(0)
+        second = replace(first, series=replace(SERIES, venue='different-fixture'))
+        with self.assertRaisesRegex(ContractError, 'RECORD_IDENTITY_REUSED'):
+            SyntheticArchive((first, second))
 
 
 class ClockAndReplayTests(unittest.TestCase):
@@ -375,6 +417,23 @@ class LeakageTests(unittest.TestCase):
             return 'even-call' if len(calls) % 2 == 0 else 'odd-call'
         with self.assertRaisesRegex(InvalidRun, 'SHIFT_DIAGNOSTIC_NONDETERMINISTIC'):
             check_forward_shift(trace(), stateful)
+
+    def test_pairwise_stable_call_order_cannot_fake_shift_sensitivity(self):
+        calls = []
+        def pairwise_stable(values):
+            label = 'call-group-' + str(len(calls) // 2)
+            calls.append(values)
+            return label
+        with self.assertRaisesRegex(InvalidRun, 'SHIFT_DIAGNOSTIC_NONDETERMINISTIC'):
+            check_forward_shift(trace(), pairwise_stable)
+
+    def test_malformed_reference_cannot_enter_an_accepted_shift_trace(self):
+        with self.assertRaises(ContractError):
+            original = trace()
+            frames = tuple(replace(frame, source_refs=(RecordRef(
+                SERIES, stamp(100), frame.anchor_close, None,
+            ),)) for frame in original.frames)
+            check_forward_shift(replace(original, frames=frames), diagnostic)
 
     def test_changing_source_metadata_alone_is_not_feature_sensitivity(self):
         archive = SyntheticArchive(tuple(bar(i, 10) for i in range(4)))

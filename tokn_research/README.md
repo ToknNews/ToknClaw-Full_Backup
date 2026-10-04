@@ -50,6 +50,11 @@ This prevents using a candle's final values for a retrospective same-close actio
 `SyntheticArchive.as_of(series, cutoff)` selects the highest known revision of
 each bar at that cutoff. Later revisions cannot rewrite an earlier view. Exact
 duplicates are idempotent; conflicting copies of the same revision are rejected.
+All revisions of a bar must preserve `(source_id, record_id)`. Within the archive,
+that identity names exactly one series/interval; an unrelated record cannot become
+a correction or reuse the identity for another event. `RecordRef` independently
+validates typed series/provenance, aware timestamps and the exact interval, so
+reconstructed trace references receive the same boundary checks.
 Overlapping eligible bars are rejected. A flagged selected revision restricts
 availability; the reader cannot silently fall back to an older clean revision.
 
@@ -110,8 +115,10 @@ controls below expose representative errors. No untrusted callback is authorized
 feature values in a separate diagnostic. It requires actual adjacent bars, not
 merely consecutive snapshots. Both paths use the same `n - 1` evaluation positions;
 the final unmatched frame is excluded. The diagnostic emits nonempty text labels,
-not trading actions. Identical vectors are evaluated consistently and repeated
-evaluation detects a stateful probe that otherwise could fake sensitivity.
+not trading actions. Identical vectors are evaluated consistently, then reevaluated
+after intervening inputs in reverse and original order. This detects the reproduced
+stateful probes, including one that changes output only after each pair of calls.
+Finite checks cannot prove the purity of arbitrary callbacks.
 
 The fixture uses markers `[10, 30, 20, 40]`. A test-only threshold produces
 `[below, above, below]`; the one-bar shift produces `[above, below, above]`.
@@ -148,7 +155,8 @@ The next stage is not authorized by this package. No H0–H8 estimator, strategy
 promotion, live data acquisition, archive ingestion, risk-control change, product
 integration, merge, deployment or live-capital action is included. Existing Market
 Watch and the separately reviewed scorecard remain independent. Independent review
-must wait for the parent to confirm a portfolio slot before it is requested.
+is coordinated through the parent; the M0 review slot was confirmed before one
+read-only reviewer was started. No implementation ran concurrently with that review.
 
 ## WHAT COULD BLOW UP THIS ACCOUNT
 

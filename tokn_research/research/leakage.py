@@ -27,20 +27,27 @@ def check_forward_shift(trace, diagnostic):
     for left, right in zip(trace.frames, trace.frames[1:]):
         if right.anchor_open != left.anchor_close:
             raise InvalidRun('SHIFT_REQUIRES_ADJACENT_BARS')
-    # Evaluate identical vectors consistently. Otherwise callback call order
-    # alone could create a false positive, even for constant feature values.
+    # Evaluate identical vectors consistently, including after intervening
+    # inputs and in a different order. Consecutive paired calls alone let a
+    # callback that increments its output every two calls fake sensitivity.
+    # Finite checks still cannot prove purity of arbitrary Python callbacks.
     outputs = {}
     for frame in trace.frames:
         if frame.values in outputs:
             continue
         try:
-            first = text(diagnostic(frame.values))
-            repeated = text(diagnostic(frame.values))
+            outputs[frame.values] = text(diagnostic(frame.values))
         except Exception as exc:
             raise InvalidRun('SHIFT_DIAGNOSTIC_FAILED') from exc
-        if first != repeated:
-            raise InvalidRun('SHIFT_DIAGNOSTIC_NONDETERMINISTIC')
-        outputs[frame.values] = first
+    vectors = tuple(outputs)
+    for order in (tuple(reversed(vectors)), vectors):
+        for vector in order:
+            try:
+                repeated = text(diagnostic(vector))
+            except Exception as exc:
+                raise InvalidRun('SHIFT_DIAGNOSTIC_FAILED') from exc
+            if outputs[vector] != repeated:
+                raise InvalidRun('SHIFT_DIAGNOSTIC_NONDETERMINISTIC')
     original = tuple(outputs[frame.values] for frame in trace.frames[:-1])
     shifted = tuple(outputs[frame.values] for frame in trace.frames[1:])
     changed = tuple(i for i, (before, after) in enumerate(zip(original, shifted)) if before != after)

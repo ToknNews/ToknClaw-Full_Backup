@@ -95,6 +95,14 @@ class RecordRef:
     event_close: datetime
     provenance: Provenance
 
+    def __post_init__(self):
+        if not isinstance(self.series, SeriesKey) or not isinstance(self.provenance, Provenance):
+            raise ContractError('EXPLICIT_SERIES_AND_PROVENANCE_REQUIRED')
+        object.__setattr__(self, 'event_open', utc(self.event_open))
+        object.__setattr__(self, 'event_close', utc(self.event_close))
+        if (self.event_close - self.event_open).total_seconds() != self.series.interval_seconds:
+            raise ContractError('REFERENCE_INTERVAL_MISMATCH')
+
 
 @dataclass(frozen=True)
 class Bar:

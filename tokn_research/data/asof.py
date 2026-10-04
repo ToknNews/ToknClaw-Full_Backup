@@ -12,10 +12,20 @@ class SyntheticArchive:
 
     def __post_init__(self):
         unique = {}
+        lineage_by_event = {}
+        event_by_lineage = {}
         for row in self.bars:
             if not isinstance(row, Bar):
                 raise ContractError('SYNTHETIC_BAR_REQUIRED')
-            key = (row.series, row.event_open, row.event_close, row.provenance.revision)
+            event = (row.series, row.event_open, row.event_close)
+            lineage = (row.provenance.source_id, row.provenance.record_id)
+            if event in lineage_by_event and lineage_by_event[event] != lineage:
+                raise ContractError('REVISION_LINEAGE_MISMATCH')
+            if lineage in event_by_lineage and event_by_lineage[lineage] != event:
+                raise ContractError('RECORD_IDENTITY_REUSED')
+            lineage_by_event[event] = lineage
+            event_by_lineage[lineage] = event
+            key = (event, row.provenance.revision)
             if key in unique and unique[key] != row:
                 raise ContractError('CONFLICTING_REVISION')
             unique[key] = row
