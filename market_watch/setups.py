@@ -4,6 +4,7 @@ from .config import Config
 from .engine import comparisons_for
 from .models import Event, event_id
 from .setup_cards import setup_card
+from .setup_costs import POLICY_VERSION, policy_for, screen_candidate
 from .setup_data import INTERVAL
 from .setup_rules import TERMINAL, book_gate, candidate, complete_window, transition
 
@@ -118,7 +119,8 @@ def advance_setups(config, store, batch, observations, routes, now):
         batch.errors[('hl_candles' if venue == 'hyperliquid' else 'okx_candles') + ':' + asset] = 'closed_candle_revised'
     health = {'status': 'ready', 'checked_at': now, 'candle_close_at': batch.requested_close,
               'primary_issues': {}, 'optional_issues': {}, 'screen': {},
-              'publishing': config.setup_publish}
+              'publishing': config.setup_publish, 'cost_policy': policy_for(config),
+              'screen_details': {}}
     active_by_asset = {t['spec']['asset']: t for t in active}
     for asset in config.assets:
         track = active_by_asset.get(asset)
@@ -143,6 +145,9 @@ def advance_setups(config, store, batch, observations, routes, now):
             optional.setdefault('coinbase_spot:' + asset, 'spot_reference_unavailable')
         health['optional_issues'].update(optional)
         if track:
+            health['screen'][asset] = track['stage']
+            if 'cost_screen' not in track['spec']:
+                health['screen_details'][asset] = {'legacy_setup': True, 'cost_screened': False}
             if source_error:
                 if not track.get('paused'):
                     track['paused'] = True
@@ -162,6 +167,7 @@ def advance_setups(config, store, batch, observations, routes, now):
             detail['context'] = context
             track['last_candle_close'] = latest.close_at
             track['last_check'] = {**detail, 'reason': reason}
+            health['screen'][asset] = reason
             track['updated_at'] = now
             entry_blocked = bool(liquidity) and track['stage'] in {'forming', 'armed'} and stage not in TERMINAL
             if entry_blocked:
@@ -208,7 +214,12 @@ def advance_setups(config, store, batch, observations, routes, now):
                 or sign * (book['mid'] - spec['invalidation']) <= 0):
             health['screen'][asset] = 'live_price_left_range'
             continue
-        key = 'setup:' + config.setup_version + ':' + asset + ':' + str(int(rows[-1].close_at))
+        spec, costs = screen_candidate(spec, config)
+        health['screen_details'][asset] = costs
+        if spec is None:
+            health['screen'][asset] = costs['reasons'][0]
+            continue
+        key = 'setup:' + config.setup_version + ':' + POLICY_VERSION + ':' + asset + ':' + str(int(rows[-1].close_at))
         if store.last_event(key) is not None:
             continue
         root = event_id(key, now)

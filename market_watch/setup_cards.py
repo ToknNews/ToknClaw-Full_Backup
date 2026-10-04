@@ -65,7 +65,7 @@ def setup_card(config, track, stage, detail, now):
               f"Retest zone · {price(spec['retest_low'])}–{price(spec['retest_high'])}\n"
               f"Invalidation · {stop} (price touch)\n"
               f"Targets · {price(spec['target_1'])} / {price(spec['target_2'])}\n"
-              'Targets: 1.5R / 2.5R from the planned trigger; actual entry changes R.')
+              'Gross targets: 1.5R / 2.5R from the trigger; entry and costs change reward/risk.')
     confirmation = (f"5m close {direction} {trigger}; breakout volume ≥ {config.setup_breakout_volume_ratio:.2f}× "
                     'the frozen 20-bar average. A later candle must touch the retest zone and close back through the trigger. '
                     'Current spread, visible depth and entry-band checks must pass.')
@@ -98,19 +98,34 @@ def setup_card(config, track, stage, detail, now):
         evidence.append('Unavailable context · ' + ', '.join(missing))
     fields = [('The setup', read), ('Decision levels · Hyperliquid', levels),
               ('Position playbook', action)]
+    cost_screen = spec.get('cost_screen')
+    if cost_screen:
+        policy = cost_screen['policy']
+        estimates = detail.get('execution_costs') or cost_screen['at_trigger']
+        reference = 'At indicative quote' if detail.get('execution_costs') else 'At planned trigger'
+        fields.insert(2, ('Room after costs',
+            f"{reference} · T1 {estimates['target_1']['net_rr']:.2f}:1 / T2 {estimates['target_2']['net_rr']:.2f}:1 reward/risk\n"
+            f"Entry band capped to retain ≥{policy['min_target_2_net_rr']:.2f}:1 to T2.\n"
+            f"Assumed each side · {policy['fee_bps_per_side']:g} bps fee + {policy['slippage_bps_per_side']:g} bps execution allowance.\n"
+            'Estimated costs reduce reward and increase stop risk. Funding excluded.'))
+    else:
+        fields.insert(2, ('Cost coverage', 'Legacy setup · issued before cost screening. Reward/risk is before costs.'))
     if status in {'forming', 'armed'} and stage != 'paused':
         fields.append(('What confirms it', confirmation))
     fields.append(('Evidence at this check', '\n'.join(evidence) or 'No fresh market evidence is available.'))
     if detail.get('reason') in REASONS:
         fields.append(('Why this update', REASONS[detail['reason']]))
     if detail.get('indicative_quote') is not None:
-        fields.append(('At confirmation', f"Indicative quote {price(detail['indicative_quote'])} USD · "
-                       f"remaining target-2 reward/risk {detail['remaining_reward_risk']:.2f}R before costs. Not a fill."))
+        value = f"Indicative quote {price(detail['indicative_quote'])} USD · not a fill."
+        if not cost_screen:
+            value += f" Target-2 reward/risk {detail['remaining_reward_risk']:.2f}R before costs."
+        fields.append(('At confirmation', value))
     color = (0xFBBF24 if stage in {'paused', 'ambiguous', 'unavailable'} else
              0x94A3B8 if status in {'expired', 'cancelled', 'invalidated'} else TOKN_BLUE)
     expiry = datetime.fromtimestamp(spec['entry_expires_at'], timezone.utc).strftime('%H:%M UTC')
     description = (f"{side.upper()} SCENARIO · 5m break / retest · Hyperliquid\n"
                    + local_stamp(now, config.timezone) + f"\nSetup ref · {track['id']} · Entry window ends {expiry}")
     footer = ('Rule-based research; edge untested. No orders or fills. Levels fixed at issuance. '
-              'Targets before costs. Book depth is partial. Funding estimates can change.')
+              'Targets before costs. Cost estimates are allowances, not guaranteed fills. '
+              'Funding excluded from reward/risk. Book depth is partial.')
     return card(spec['asset'] + ' · ' + LABELS[stage], description, fields, color, now, footer)

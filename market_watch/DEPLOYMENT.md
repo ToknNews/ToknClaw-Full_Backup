@@ -1,9 +1,10 @@
 # Market Watch deployments from GitHub
 
-Status: prepared for first installation. Offline tests validate command restrictions,
-archive safety, backup preservation and failure recovery. Actual Hetzner SSH,
-systemd execution and GitHub environment permissions must pass the connection
-check and first release before this is considered operational.
+Status: operational. The GitHub-to-Hetzner probe and first managed production
+release passed on October 4, 2026. The first release reported `deployed` after
+tests, consistent backups, collection, a healthy read-only check and timer resumption.
+Evidence: https://github.com/ToknNews/ToknClaw-Full_Backup/actions/runs/37179019271 .
+The bootstrap steps below are for a new installation; do not reinstall an existing helper.
 
 ## What this installs
 

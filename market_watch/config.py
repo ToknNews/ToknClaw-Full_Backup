@@ -50,6 +50,11 @@ class Config:
     setup_breakout_volume_ratio: float = 1.2
     setup_max_spread_bps: float = 8.0
     setup_min_visible_depth_usd: float = 10000.0
+    setup_fee_bps_per_side: float = 4.5
+    setup_slippage_bps_per_side: float = 2.0
+    setup_min_atr_bps: float = 10.0
+    setup_min_risk_bps: float = 10.0
+    setup_min_net_rr: float = 1.5
     setup_version: str = "breakout-retest-v1"
 
     def __post_init__(self):
@@ -112,7 +117,12 @@ class Config:
             raise ValueError('setup history must cover every full indicator window')
         for name, lower, upper in (('setup_breakout_volume_ratio', 1.0, 5.0),
                                    ('setup_max_spread_bps', 0.1, 50.0),
-                                   ('setup_min_visible_depth_usd', 1000.0, 10000000.0)):
+                                   ('setup_min_visible_depth_usd', 1000.0, 10000000.0),
+                                   ('setup_fee_bps_per_side', 0.0, 50.0),
+                                   ('setup_slippage_bps_per_side', 0.0, 50.0),
+                                   ('setup_min_atr_bps', 1.0, 500.0),
+                                   ('setup_min_risk_bps', 1.0, 500.0),
+                                   ('setup_min_net_rr', 1.0, 2.0)):
             value = getattr(self, name)
             if (isinstance(value, bool) or not isinstance(value, (float, int))
                     or not math.isfinite(value) or not lower <= value <= upper):
