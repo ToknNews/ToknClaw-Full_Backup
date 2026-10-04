@@ -332,3 +332,27 @@ not run this unpublished change. The deploy workflow has zero diff from the base
 Routing follows GitHub's [workflow filter syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
 and [concurrency semantics](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
 No deployment, publication, strategy behavior or access/settings change is included.
+
+### Independent review before publication
+
+One authorized read-only reviewer approved implementation commit
+`895fb923ab434e68cc51e864a25c34b0153da52c` with no blocking findings. No concurrent
+implementation ran during review. The reviewer independently parsed both workflows
+with locally available PyYAML, compared their structures against `f60f941`, and
+confirmed unchanged offline job definitions, matrix, commands, permissions and
+workflow name, plus byte-identical deployment workflow and independent concurrency
+groups. This supplements the narrow standard-library routing contracts.
+
+PR opening needs no prior feature-push check. Draft PRs are not skipped: opening,
+synchronizing and reopening run checks. Draft/ready transitions alone do not rerun
+an unchanged commit, consistent with the unchanged default PR event configuration.
+Observed hosted check names remain `offline-tests (3.10)`, `offline-tests (3.12)`
+and `offline-tests (3.14)`; deployment keeps `tests` and `connect-or-deploy`.
+Branch-protection settings were not inspected; name compatibility does not claim
+a settings audit.
+
+Independent validation passed all six focused tests, 235 Market Watch tests
+(0.645s), 56 research tests (0.030s), and the whitespace check. Python 3.10/3.14
+and actionlint remain unavailable locally; this unpublished change has not run on
+hosted CI. The follow-up commit records this verdict only; no implementation fix
+was required. Publication, merge and deployment remain pending owner review.
