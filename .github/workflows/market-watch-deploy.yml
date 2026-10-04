@@ -52,6 +52,25 @@ jobs:
           import subprocess
           import tempfile
 
+          def ssh_failure(stderr):
+              # Return fixed guidance only. Never echo SSH's endpoint/key text.
+              error = stderr.decode(errors='replace').lower()
+              if 'host key verification failed' in error or 'host identification has changed' in error:
+                  return 'Server identity check failed. Set TOKN_KNOWN_HOSTS to the complete public host-identity line printed by the installer.'
+              if 'permission denied' in error:
+                  return 'SSH rejected the deployment key. TOKN_SSH_KEY must be the private half of the public key installed for tokn-deploy.'
+              if 'load key' in error or 'libcrypto' in error or 'invalid format' in error:
+                  return 'SSH could not load TOKN_SSH_KEY. Paste the complete unencrypted private key, including its BEGIN/END lines.'
+              if 'could not resolve hostname' in error:
+                  return 'The configured server hostname could not be resolved. Check TOKN_SSH_HOST.'
+              if 'connection timed out' in error or 'no route to host' in error:
+                  return 'GitHub could not reach the SSH port. Check the server address, port and firewall rules for hosted runners.'
+              if 'connection refused' in error:
+                  return 'The server refused the configured SSH port. Check TOKN_SSH_PORT and the SSH service.'
+              if 'connection closed' in error or 'connection reset' in error:
+                  return 'The server or network closed the SSH connection. Inspect the server SSH authentication log.'
+              return 'SSH did not complete. Inspect the server receipt and SSH authentication log; sensitive diagnostics were withheld.'
+
           os.umask(0o077)
           required = ('TOKN_SSH_HOST', 'TOKN_SSH_KEY', 'TOKN_KNOWN_HOSTS')
           missing = [name for name in required if not os.environ.get(name, '').strip()]
@@ -75,10 +94,22 @@ jobs:
           with tempfile.TemporaryDirectory(prefix='tokn-ssh-') as directory:
               key = Path(directory) / 'key'
               known = Path(directory) / 'known_hosts'
-              key.write_text(os.environ['TOKN_SSH_KEY'].strip() + '\n')
-              known.write_text(os.environ['TOKN_KNOWN_HOSTS'].strip() + '\n')
+              private = os.environ['TOKN_SSH_KEY'].replace('\r\n', '\n').strip()
+              if private.startswith(('ssh-', 'SHA256:')):
+                  raise SystemExit('TOKN_SSH_KEY contains a public key or fingerprint. Copy the private key file without the .pub extension.')
+              key.write_text(private + '\n')
+              known.write_text(os.environ['TOKN_KNOWN_HOSTS'].replace('\r\n', '\n').strip() + '\n')
               key.chmod(0o600)
               known.chmod(0o600)
+              validation = subprocess.run(['ssh-keygen', '-y', '-P', '', '-f', str(key)],
+                                          stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
+              if validation.returncode:
+                  raise SystemExit('TOKN_SSH_KEY is not a readable unencrypted private key. Paste the full file, including BEGIN/END lines and actual newlines.')
+              validation = subprocess.run(['ssh-keygen', '-F', 'tokn-market-watch', '-f', str(known)],
+                                          stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
+              if validation.returncode:
+                  raise SystemExit('TOKN_KNOWN_HOSTS must contain the entire line beginning tokn-market-watch ssh-ed25519 from the installer.')
+              print('Private key format and host-alias entry validated; checking SSH access.')
               args = ['ssh', '-F', '/dev/null', '-T', '-i', str(key), '-p', port,
                       '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
                       '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
@@ -96,8 +127,7 @@ jobs:
                                    'still be running; inspect its receipt before retrying.')
               print(result.stdout.decode(errors='replace'))
               if result.returncode:
-                  print('Connection/deployment did not pass. Check the server receipt and '
-                        'the configured host, firewall, key and pinned host identity.')
+                  print(ssh_failure(result.stderr))
                   print('Exit status:', result.returncode)
               with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
                   summary.write('Market Watch command: `' + command + '`\n\n')
